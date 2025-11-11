@@ -3,6 +3,7 @@ package io.github.sdpiter.livetranslate.overlay
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.net.Uri
 import android.os.Build
@@ -58,11 +59,14 @@ class OverlayService : Service() {
         wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createNotifChannel()
 
-        // Пытаемся стать foreground сразу
+        val note = buildNotification("Запуск…")
         try {
-            startForeground(NOTIF_ID, buildNotification("Запуск…"))
+            if (Build.VERSION.SDK_INT >= 29) {
+                startForeground(NOTIF_ID, note, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            } else {
+                startForeground(NOTIF_ID, note)
+            }
         } catch (e: Exception) {
-            // На некоторых прошивках может броситься исключение — даём подсказку.
             Toast.makeText(this, "FGS не запустился: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
             updateNotification("FGS не запустился — проверьте уведомления")
             openNotificationSettings()
@@ -143,7 +147,7 @@ class OverlayService : Service() {
 
     private fun retryShowOverlay() {
         scope.launch {
-            repeat(12) { // ~18 секунд
+            repeat(12) {
                 delay(1500)
                 if (Settings.canDrawOverlays(this@OverlayService)) {
                     tryShowOverlay()
@@ -202,7 +206,6 @@ class OverlayService : Service() {
             asr = SpeechRecognizerEngine(this@OverlayService)
             translator = MlKitTranslator()
             tts = TtsEngine(this@OverlayService)
-
             scope.launch {
                 asr.results.collectLatest { text ->
                     lastOriginal = text
