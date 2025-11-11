@@ -22,23 +22,9 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.wrapContentHeight
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color as C
@@ -50,12 +36,8 @@ import io.github.sdpiter.livetranslate.R
 import io.github.sdpiter.livetranslate.asr.SpeechRecognizerEngine
 import io.github.sdpiter.livetranslate.mt.MlKitTranslator
 import io.github.sdpiter.livetranslate.tts.TtsEngine
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.cancel
 
 class OverlayService : Service() {
 
@@ -85,10 +67,11 @@ class OverlayService : Service() {
         wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createNotifChannel()
 
+        // Стартуем FGS как dataSync (без «жёстких» требований к микрофону)
         val note = buildNotification("Запуск…")
         try {
             if (Build.VERSION.SDK_INT >= 29) {
-                startForeground(NOTIF_ID, note, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+                startForeground(NOTIF_ID, note, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
             } else startForeground(NOTIF_ID, note)
         } catch (e: Exception) {
             Toast.makeText(this, "FGS не запустился: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
@@ -110,10 +93,22 @@ class OverlayService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_STOP -> stopSelf()
-        }
+        when (intent?.action) { ACTION_STOP -> stopSelf() }
         return START_STICKY
+    }
+
+    // Переключение типа FGS (микрофон активен / нет)
+    private fun setFgsTypeMic(active: Boolean, text: String) {
+        val note = buildNotification(text)
+        if (Build.VERSION.SDK_INT >= 29) {
+            val type = if (active)
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            else
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            startForeground(NOTIF_ID, note, type)
+        } else {
+            startForeground(NOTIF_ID, note)
+        }
     }
 
     private fun contentIntent(): PendingIntent {
@@ -179,7 +174,7 @@ class OverlayService : Service() {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(0xCCFF1744.toInt()) // алый
             val tv = TextView(this@OverlayService).apply {
-                text = "DEBUG OVERLAY (должен быть виден)"
+                text = "DEBUG OVERLAY (должен быть виден постоянно)"
                 setTextColor(Color.WHITE)
                 textSize = 14f
                 setPadding(24, 16, 24, 16)
@@ -275,10 +270,8 @@ class OverlayService : Service() {
                 ) {
                     Text("LiveTranslate", color = C.White)
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(
-                            if (listening) "●" else "○",
-                            color = if (listening) C(0xFF58E6D9) else C.LightGray
-                        )
+                        Text(if (listening) "●" else "○",
+                            color = if (listening) C(0xFF58E6D9) else C.LightGray)
                         Text("Swap", color = C.White, modifier = Modifier.clickable { onSwap() })
                         Text("✕", color = C.White, modifier = Modifier.clickable { onClose() })
                     }
@@ -287,11 +280,30 @@ class OverlayService : Service() {
                 if (lastTranslated.isNotBlank()) Text(lastTranslated, color = C.White)
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Button(onClick = { isDialog = false; startListening(); listening = true }) { Text("Субтитры") }
-                    Button(onClick = { isDialog = true;  startListening(); listening = true }) { Text("Диалог") }
+                    Button(onClick = {
+                        isDialog = false
+                        setFgsTypeMic(true, "Микрофон активен")
+                        startListening()
+                        listening = true
+                    }) { Text("Субтитры") }
+
+                    Button(onClick = {
+                        isDialog = true
+                        setFgsTypeMic(true, "Микрофон активен")
+                        startListening()
+                        listening = true
+                    }) { Text("Диалог") }
+
                     OutlinedButton(onClick = {
-                        if (listening) { asr.stop(); listening = false; updateNotification("Пауза") }
-                        else { startListening(); listening = true; updateNotification("Старт") }
+                        if (listening) {
+                            asr.stop()
+                            setFgsTypeMic(false, "Оверлей активен")
+                            listening = false
+                        } else {
+                            setFgsTypeMic(true, "Микрофон активен")
+                            startListening()
+                            listening = true
+                        }
                     }) { Text(if (listening) "Пауза" else "Старт") }
                 }
             }
