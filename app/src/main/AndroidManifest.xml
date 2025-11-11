@@ -5,7 +5,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- На Android 14+ типы FGS указываем только при реальном использовании.
+         microphone убрали, чтобы ОС не гасила сервис на старте. -->
 
     <application
         android:allowBackup="true"
@@ -23,10 +24,14 @@
             </intent-filter>
         </activity>
 
-        <!-- Сервис оверлея (Foreground) — добавим реализацию в Части C -->
+        <!-- Foreground-сервис с оверлеем (без указания типа) -->
         <service
             android:name=".overlay.OverlayService"
-            android:exported="false"
-            android:foregroundServiceType="microphone" />
+            android:exported="false" />
+
+        <!-- Тестовый Foreground-сервис (показывает только уведомление) -->
+        <service
+            android:name=".debug.FgTestService"
+            android:exported="false" />
     </application>
 </manifest>
