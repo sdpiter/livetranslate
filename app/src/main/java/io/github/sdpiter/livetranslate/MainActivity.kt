@@ -112,9 +112,8 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
                 ) { Text("Запустить оверлей") }
 
                 OutlinedButton(onClick = {
-                    val i = Intent(ctx, OverlayService::class.java).setAction(OverlayService.ACTION_STOP)
-                    ctx.startService(i)
-                }) { Text("Остановить") }
+    ctx.stopService(Intent(ctx, OverlayService::class.java))
+}) { Text("Остановить") }
             }
 
             OutlinedButton(onClick = {
