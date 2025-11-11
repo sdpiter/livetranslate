@@ -1,0 +1,28 @@
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..8a0a627
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,39 @@
++# Android
++.idea/
++.gradle/
++local.properties
++**/build/
++captures/
++*.iml
++*.keystore
++*.jks
++
++# OS
++.DS_Store
++Thumbs.db
++
++# Gradle
++gradle-app.setting
++
++# Kotlin
++.kotlin/
++
++# Logs
++*.log
