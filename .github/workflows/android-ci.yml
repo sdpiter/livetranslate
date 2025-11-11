@@ -12,8 +12,12 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+      - name: Setup Gradle 8.7
+        uses: gradle/gradle-build-action@v2
+        with:
+          gradle-version: '8.7'
       - name: Build debug APK
-        run: ./gradlew assembleDebug
+        run: gradle :app:assembleDebug
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
