@@ -112,7 +112,8 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
                 ) { Text("Запустить оверлей") }
 
                 OutlinedButton(onClick = {
-    ctx.stopService(Intent(ctx, OverlayService::class.java))
+    val i = Intent(ctx, io.github.sdpiter.livetranslate.overlay.OverlayService::class.java)
+    ctx.stopService(i)
 }) { Text("Остановить") }
             }
 
