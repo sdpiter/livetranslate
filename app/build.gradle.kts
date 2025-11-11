@@ -55,6 +55,7 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")
     implementation("androidx.core:core-ktx:1.13.1")
-    implementation("com.google.android.material:material:1.12.0")
 
+    // Добавляем Material (даёт темы Theme.Material3.*)
+    implementation("com.google.android.material:material:1.12.0")
 }
