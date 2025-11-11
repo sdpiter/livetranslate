@@ -6,11 +6,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-
-    <!-- Типы Foreground Service (Android 14+) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-
     <!-- Для службы специальных возможностей -->
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
 
@@ -30,19 +27,19 @@
             </intent-filter>
         </activity>
 
-        <!-- Оверлей через Foreground Service (оставляем как опцию) -->
+        <!-- Foreground overlay (может гаситься One UI; оставляем как запасной вариант) -->
         <service
             android:name=".overlay.OverlayService"
             android:exported="false"
             android:foregroundServiceType="dataSync|microphone" />
 
-        <!-- Тестовый FGS (уведомление) -->
+        <!-- Тестовый FGS -->
         <service
             android:name=".debug.FgTestService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
-        <!-- Новый: Accessibility overlay -->
+        <!-- Основной стабильный канал: Accessibility overlay -->
         <service
             android:name=".accessibility.LtAccessibilityService"
             android:exported="true"
