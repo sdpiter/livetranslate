@@ -64,7 +64,5 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
-
-    // ВАЖНО: даёт Task.await() для Google Tasks (нужно для ML Kit)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 }
