@@ -2,11 +2,13 @@ package io.github.sdpiter.livetranslate
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -30,11 +32,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import com.google.accompanist.permissions.rememberPermissionState
+import androidx.core.content.ContextCompat
 import io.github.sdpiter.livetranslate.overlay.OverlayService
 
-@OptIn(ExperimentalPermissionsApi::class)
 class MainActivity : ComponentActivity() {
 
     private var askNotifPermission: (() -> Unit)? = null
@@ -57,11 +57,23 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun Landing(askNotifPermission: (() -> Unit)?) {
     val ctx = LocalContext.current
-    val micPermission = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
+
+    // Состояние разрешения микрофона
+    var micGranted by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                ctx, Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val micLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> micGranted = granted }
+
+    // Overlay
     var overlayGranted by remember { mutableStateOf(Settings.canDrawOverlays(ctx)) }
 
     Surface(Modifier.fillMaxSize()) {
@@ -77,8 +89,8 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
                 style = MaterialTheme.typography.bodySmall
             )
 
-            Button(onClick = { micPermission.launchPermissionRequest() }) {
-                Text(if (micPermission.status.isGranted) "Микрофон: разрешён" else "Разрешить микрофон")
+            Button(onClick = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }) {
+                Text(if (micGranted) "Микрофон: разрешён" else "Разрешить микрофон")
             }
 
             Button(onClick = {
@@ -88,16 +100,14 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
                         Uri.parse("package:${ctx.packageName}")
                     )
                     ctx.startActivity(intent)
-                } else {
-                    overlayGranted = true
-                }
+                } else overlayGranted = true
             }) {
                 Text(if (overlayGranted) "Overlay: разрешён" else "Разрешить «поверх окон»")
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
-                    enabled = micPermission.status.isGranted && Settings.canDrawOverlays(ctx),
+                    enabled = micGranted && Settings.canDrawOverlays(ctx),
                     onClick = {
                         askNotifPermission?.invoke()
                         val i = Intent(ctx, OverlayService::class.java)
@@ -123,7 +133,6 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
 
     // Обновляем флаг после возвращения из настроек оверлея
     LaunchedEffect(Unit) {
-        // Небольшой триггер для перерисовки после возвращения в активность
         overlayGranted = Settings.canDrawOverlays(ctx)
     }
 }
