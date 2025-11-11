@@ -9,17 +9,8 @@ import android.view.accessibility.AccessibilityEvent
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.wrapContentHeight
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,7 +32,6 @@ class LtAccessibilityService : AccessibilityService() {
     private var overlay: View? = null
     private val scope = CoroutineScope(Dispatchers.Main.immediate)
 
-    // Ядро
     private lateinit var asr: SpeechRecognizerEngine
     private lateinit var translator: MlKitTranslator
     private lateinit var tts: TtsEngine
@@ -56,17 +46,16 @@ class LtAccessibilityService : AccessibilityService() {
         translator = MlKitTranslator()
         tts = TtsEngine(this)
         showOverlay()
-        Toast.makeText(this, "Accessibility overlay включён", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "LiveTranslate overlay включён (Accessibility)", Toast.LENGTH_SHORT).show()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
     override fun onInterrupt() {}
 
-    private fun lp(): WindowManager.LayoutParams {
+    private fun params(): WindowManager.LayoutParams {
         return WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            // Тип окна службы доступности — не требует FGS
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
@@ -80,12 +69,10 @@ class LtAccessibilityService : AccessibilityService() {
     private fun showOverlay() {
         if (overlay != null) return
         val view = ComposeView(this).apply {
-            setContent {
-                MaterialTheme { OverlayUI() }
-            }
+            setContent { MaterialTheme { OverlayUI() } }
         }
         try {
-            wm.addView(view, lp())
+            wm.addView(view, params())
             overlay = view
         } catch (e: Exception) {
             Toast.makeText(this, "Ошибка overlay: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
@@ -104,7 +91,6 @@ class LtAccessibilityService : AccessibilityService() {
         var isDialog by remember { mutableStateOf(false) }
         var listening by remember { mutableStateOf(false) }
 
-        // Подписка на текст из ASR
         LaunchedEffect(Unit) {
             scope.launch {
                 asr.results.collectLatest { text ->
@@ -156,24 +142,11 @@ class LtAccessibilityService : AccessibilityService() {
                 if (lastTranslated.isNotBlank()) Text(lastTranslated, color = Color.White)
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Button(onClick = {
-                        isDialog = false
-                        startListening()
-                        listening = true
-                    }) { Text("Субтитры") }
-
-                    Button(onClick = {
-                        isDialog = true
-                        startListening()
-                        listening = true
-                    }) { Text("Диалог") }
-
+                    Button(onClick = { isDialog = false; startListening(); listening = true }) { Text("Субтитры") }
+                    Button(onClick = { isDialog = true;  startListening(); listening = true }) { Text("Диалог") }
                     OutlinedButton(onClick = {
-                        if (listening) {
-                            asr.stop(); listening = false
-                        } else {
-                            startListening(); listening = true
-                        }
+                        if (listening) { asr.stop(); listening = false }
+                        else { startListening(); listening = true }
                     }) { Text(if (listening) "Пауза" else "Старт") }
                 }
             }
