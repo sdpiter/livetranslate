@@ -1,0 +1,10 @@
+theme: jekyll-theme-cayman
+title: LiveTranslate
+description: Offline subtitles and speech translation overlay for Android
+show_downloads: true
+
+plugins:
+  - jekyll-relative-links
+relative_links:
+  enabled: true
+  collections: true
