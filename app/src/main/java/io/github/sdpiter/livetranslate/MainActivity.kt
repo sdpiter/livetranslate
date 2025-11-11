@@ -67,7 +67,7 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text("LiveTranslate α", style = MaterialTheme.typography.headlineSmall)
-            Text("1) Разрешите микрофон и overlay\n2) «Запустить оверлей»\n3) Выберите режим", style = MaterialTheme.typTypography.bodySmall)
+            Text("1) Разрешите микрофон и overlay\n2) «Запустить оверлей»\n3) Выберите режим", style = MaterialTheme.typography.bodySmall)
 
             Button(onClick = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }) {
                 Text(if (micGranted) "Микрофон: разрешён" else "Разрешить микрофон")
