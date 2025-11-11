@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.pm.ServiceInfo
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
@@ -39,11 +40,15 @@ class FgTestService : Service() {
                 .setOngoing(true)
                 .build()
 
-            startForeground(ID, note)
+            if (Build.VERSION.SDK_INT >= 29) {
+                startForeground(ID, note, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            } else {
+                startForeground(ID, note)
+            }
             Toast.makeText(this, "FGS: стартовал (должно быть уведомление)", Toast.LENGTH_SHORT).show()
 
             scope.launch {
-                delay(20_000) // держим 20 сек
+                delay(20_000)
                 stopSelf()
             }
         } catch (e: Exception) {
