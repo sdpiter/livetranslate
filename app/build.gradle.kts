@@ -56,15 +56,15 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")
     implementation("androidx.core:core-ktx:1.13.1")
 
-    // Материал — даёт темы Material3
+    // Material (темы)
     implementation("com.google.android.material:material:1.12.0")
 
-    // Перевод офлайн (ML Kit)
+    // ML Kit Translate (on-device)
     implementation("com.google.mlkit:translate:17.0.2")
 
-    // Коррутины
+    // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
-    // Разрешения (упростим запросы в онбординге)
-    implementation("com.google.accompanist:accompanist-permissions:0.34.0")
+    // ВАЖНО: даёт Task.await() для Google Tasks (нужно для ML Kit)
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 }
