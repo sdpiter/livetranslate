@@ -1,0 +1,54 @@
+name: Apply patch
+
+on:
+  workflow_dispatch:
+    inputs:
+      patch_path:
+        description: Path to patch file in repo (e.g., docs/_incoming/0001.patch)
+        required: true
+        type: string
+      commit_message:
+        description: Commit message
+        required: true
+        type: string
+      branch:
+        description: Target branch
+        required: false
+        default: main
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+
+      - name: Show patch header
+        run: |
+          test -f "${{ inputs.patch_path }}" || { echo "Patch not found: ${{ inputs.patch_path }}"; exit 1; }
+          echo "---- PATCH HEAD ----"
+          head -n 40 "${{ inputs.patch_path }}" || true
+          echo "--------------------"
+
+      - name: Apply patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git apply --whitespace=nowarn "${{ inputs.patch_path }}" || { echo "git apply failed"; exit 1; }
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "${{ inputs.commit_message }}"
+          git push origin HEAD:${{ inputs.branch }}
+
+      - name: Show changed files
+        run: git show --name-only --pretty="format:"
