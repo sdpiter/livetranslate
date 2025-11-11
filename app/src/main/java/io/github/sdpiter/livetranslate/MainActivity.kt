@@ -18,6 +18,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.github.sdpiter.livetranslate.overlay.OverlayService
 
 class MainActivity : ComponentActivity() {
@@ -35,9 +38,7 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            MaterialTheme {
-                Landing(askNotifPermission = askNotifPermission)
-            }
+            MaterialTheme { Landing(askNotifPermission = askNotifPermission) }
         }
     }
 }
@@ -45,7 +46,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun Landing(askNotifPermission: (() -> Unit)?) {
     val ctx = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
 
+    // Микрофон
     var micGranted by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -57,17 +60,30 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
         ActivityResultContracts.RequestPermission()
     ) { granted -> micGranted = granted }
 
+    // Overlay
     var overlayGranted by remember { mutableStateOf(Settings.canDrawOverlays(ctx)) }
+
+    // Автообновление overlayGranted при возврате в приложение
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                overlayGranted = Settings.canDrawOverlays(ctx)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     Surface(Modifier.fillMaxSize()) {
         Column(
-            Modifier
-                .fillMaxSize()
-                .padding(16.dp),
+            Modifier.fillMaxSize().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text("LiveTranslate α", style = MaterialTheme.typography.headlineSmall)
-            Text("1) Разрешите микрофон и overlay\n2) «Запустить оверлей»\n3) Выберите режим", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "1) Разрешите микрофон и overlay\n2) «Запустить оверлей»\n3) Выберите режим",
+                style = MaterialTheme.typography.bodySmall
+            )
 
             Button(onClick = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }) {
                 Text(if (micGranted) "Микрофон: разрешён" else "Разрешить микрофон")
@@ -84,15 +100,15 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
             }) { Text(if (overlayGranted) "Overlay: разрешён" else "Разрешить «поверх окон»") }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // ВАЖНО: разрешаем запуск даже если overlayGranted == false.
                 Button(
-                    enabled = micGranted && Settings.canDrawOverlays(ctx),
+                    enabled = micGranted,
                     onClick = {
                         askNotifPermission?.invoke()
                         val i = Intent(ctx, OverlayService::class.java).apply {
                             action = OverlayService.ACTION_START
                         }
-                        // Важно: foreground-start
-                        androidx.core.content.ContextCompat.startForegroundService(ctx, i)
+                        ContextCompat.startForegroundService(ctx, i)
                     }
                 ) { Text("Запустить оверлей") }
 
@@ -110,9 +126,5 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
                 style = MaterialTheme.typography.bodySmall
             )
         }
-    }
-
-    LaunchedEffect(Unit) {
-        overlayGranted = Settings.canDrawOverlays(ctx)
     }
 }
