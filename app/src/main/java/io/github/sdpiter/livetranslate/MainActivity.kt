@@ -12,25 +12,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -64,7 +48,6 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
     val ctx = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Утилиты статуса
     fun notifEnabled(): Boolean {
         val nm = ctx.getSystemService(NotificationManager::class.java)
         return if (Build.VERSION.SDK_INT >= 24) nm.areNotificationsEnabled() else true
@@ -78,7 +61,6 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
         return enabled?.split(':')?.contains(svc) == true
     }
 
-    // Микрофон
     var micGranted by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO)
@@ -89,12 +71,10 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
         ActivityResultContracts.RequestPermission()
     ) { granted -> micGranted = granted }
 
-    // Overlay / Уведомления / Спец. возможности
     var overlayGranted by remember { mutableStateOf(Settings.canDrawOverlays(ctx)) }
     var notificationsGranted by remember { mutableStateOf(notifEnabled()) }
     var accEnabled by remember { mutableStateOf(isAccEnabled()) }
 
-    // Обновляем статусы при возврате из настроек
     DisposableEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, e ->
             if (e == Lifecycle.Event.ON_RESUME) {
@@ -118,34 +98,26 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
                 style = MaterialTheme.typography.bodySmall
             )
 
-            // Разрешение микрофона
             Button(onClick = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }) {
                 Text(if (micGranted) "Микрофон: разрешён" else "Разрешить микрофон")
             }
 
-            // Настройки overlay
             Button(onClick = {
-                val i = Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:${ctx.packageName}")
-                )
+                val i = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${ctx.packageName}"))
                 ctx.startActivity(i)
             }) { Text("Открыть настройки «поверх окон»") }
 
-            // Настройки уведомлений
             Button(onClick = {
                 val i = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
                     .putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName)
                 ctx.startActivity(i)
             }) { Text("Открыть настройки уведомлений") }
 
-            // Специальные возможности (Accessibility overlay)
             Button(onClick = {
                 val i = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
                 ctx.startActivity(i)
             }) { Text(if (accEnabled) "Спец. возможности: включено" else "Открыть Спец. возможности") }
 
-            // Управление текущим OverlayService (может быть неактивен на One UI — используйте Accessibility)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     enabled = micGranted,
@@ -155,14 +127,13 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
                             .setAction(OverlayService.ACTION_START)
                         ContextCompat.startForegroundService(ctx, i)
                     }
-                ) { Text("Запустить оверлей") }
+                ) { Text("Запустить оверлей (FGS)") }
 
                 OutlinedButton(onClick = {
                     ctx.stopService(Intent(ctx, OverlayService::class.java))
-                }) { Text("Остановить") }
+                }) { Text("Остановить FGS") }
             }
 
-            // Тестовый FGS (уведомление на 20 секунд)
             OutlinedButton(onClick = {
                 askNotifPermission?.invoke()
                 val i = Intent(ctx, FgTestService::class.java)
@@ -171,9 +142,7 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
 
             Spacer(Modifier.height(12.dp))
             Text(
-                "Подсказки:\n— Включите уведомления для LiveTranslate (Android 13+)\n" +
-                        "— Разрешите «Появление поверх» и включите службу в «Спец. возможности»\n" +
-                        "— На Samsung отключите агрессивную экономию энергии для приложения",
+                "Для стабильного окна на Samsung включите службу в «Спец. возможности».",
                 style = MaterialTheme.typography.bodySmall
             )
         }
