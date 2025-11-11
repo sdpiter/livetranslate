@@ -22,6 +22,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.github.sdpiter.livetranslate.overlay.OverlayService
+import io.github.sdpiter.livetranslate.debug.FgTestService
 
 class MainActivity : ComponentActivity() {
 
@@ -37,9 +38,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        setContent {
-            MaterialTheme { Landing(askNotifPermission = askNotifPermission) }
-        }
+        setContent { MaterialTheme { Landing(askNotifPermission) } }
     }
 }
 
@@ -51,27 +50,22 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
     // Микрофон
     var micGranted by remember {
         mutableStateOf(
-            ContextCompat.checkSelfPermission(
-                ctx, Manifest.permission.RECORD_AUDIO
-            ) == PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO)
+                    == PackageManager.PERMISSION_GRANTED
         )
     }
     val micLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> micGranted = granted }
 
-    // Overlay
+    // Overlay (для статуса)
     var overlayGranted by remember { mutableStateOf(Settings.canDrawOverlays(ctx)) }
-
-    // Автообновление overlayGranted при возврате в приложение
     DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                overlayGranted = Settings.canDrawOverlays(ctx)
-            }
+        val obs = LifecycleEventObserver { _, e ->
+            if (e == Lifecycle.Event.ON_RESUME) overlayGranted = Settings.canDrawOverlays(ctx)
         }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
 
     Surface(Modifier.fillMaxSize()) {
@@ -80,10 +74,8 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text("LiveTranslate α", style = MaterialTheme.typography.headlineSmall)
-            Text(
-                "1) Разрешите микрофон и overlay\n2) «Запустить оверлей»\n3) Выберите режим",
-                style = MaterialTheme.typography.bodySmall
-            )
+            Text("1) Разрешите микрофон и overlay\n2) «Запустить оверлей»\n3) Выберите режим",
+                style = MaterialTheme.typography.bodySmall)
 
             Button(onClick = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }) {
                 Text(if (micGranted) "Микрофон: разрешён" else "Разрешить микрофон")
@@ -100,31 +92,35 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
             }) { Text(if (overlayGranted) "Overlay: разрешён" else "Разрешить «поверх окон»") }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // ВАЖНО: разрешаем запуск даже если overlayGranted == false.
+                // Запускаем OverlayService как FGS. (Без типа — см. манифест)
                 Button(
                     enabled = micGranted,
                     onClick = {
                         askNotifPermission?.invoke()
-                        val i = Intent(ctx, OverlayService::class.java).apply {
-                            action = OverlayService.ACTION_START
-                        }
-                        ContextCompat.startForegroundService(ctx, i)
+                        val i = Intent(ctx, OverlayService::class.java)
+                            .setAction(OverlayService.ACTION_START)
+                        // пробуем обычный startService — на 26+ система сама потребует startForeground в onCreate
+                        ctx.startService(i)
                     }
                 ) { Text("Запустить оверлей") }
 
                 OutlinedButton(onClick = {
-                    val i = Intent(ctx, OverlayService::class.java).apply {
-                        action = OverlayService.ACTION_STOP
-                    }
+                    val i = Intent(ctx, OverlayService::class.java)
+                        .setAction(OverlayService.ACTION_STOP)
                     ctx.startService(i)
                 }) { Text("Остановить") }
             }
 
+            // Отдельно: тест запуска Foreground‑сервиса (только уведомление)
+            OutlinedButton(onClick = {
+                askNotifPermission?.invoke()
+                val i = Intent(ctx, FgTestService::class.java)
+                ContextCompat.startForegroundService(ctx, i)
+            }) { Text("Тест уведомления (FGS)") }
+
             Spacer(Modifier.height(16.dp))
-            Text(
-                "Советы:\n— Скачайте офлайн‑голоса TTS (EN/RU)\n— На Xiaomi включите Плавающие окна, Автозапуск и «Без ограничений»",
-                style = MaterialTheme.typography.bodySmall
-            )
+            Text("Советы:\n— Включите уведомления для LiveTranslate (Android 13+)\n— На Samsung: Появление поверх → Разрешить; Батарея → Без ограничений",
+                style = MaterialTheme.typography.bodySmall)
         }
     }
 }
