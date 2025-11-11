@@ -11,24 +11,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -61,7 +46,6 @@ class MainActivity : ComponentActivity() {
 fun Landing(askNotifPermission: (() -> Unit)?) {
     val ctx = LocalContext.current
 
-    // Состояние разрешения микрофона
     var micGranted by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -73,7 +57,6 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
         ActivityResultContracts.RequestPermission()
     ) { granted -> micGranted = granted }
 
-    // Overlay
     var overlayGranted by remember { mutableStateOf(Settings.canDrawOverlays(ctx)) }
 
     Surface(Modifier.fillMaxSize()) {
@@ -84,10 +67,7 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text("LiveTranslate α", style = MaterialTheme.typography.headlineSmall)
-            Text(
-                "1) Разрешите микрофон и overlay\n2) Нажмите «Запустить оверлей»\n3) Выберите режим",
-                style = MaterialTheme.typography.bodySmall
-            )
+            Text("1) Разрешите микрофон и overlay\n2) «Запустить оверлей»\n3) Выберите режим", style = MaterialTheme.typTypography.bodySmall)
 
             Button(onClick = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }) {
                 Text(if (micGranted) "Микрофон: разрешён" else "Разрешить микрофон")
@@ -101,37 +81,37 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
                     )
                     ctx.startActivity(intent)
                 } else overlayGranted = true
-            }) {
-                Text(if (overlayGranted) "Overlay: разрешён" else "Разрешить «поверх окон»")
-            }
+            }) { Text(if (overlayGranted) "Overlay: разрешён" else "Разрешить «поверх окон»") }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     enabled = micGranted && Settings.canDrawOverlays(ctx),
                     onClick = {
                         askNotifPermission?.invoke()
-                        val i = Intent(ctx, OverlayService::class.java)
-                        i.action = OverlayService.ACTION_START
-                        ctx.startService(i)
+                        val i = Intent(ctx, OverlayService::class.java).apply {
+                            action = OverlayService.ACTION_START
+                        }
+                        // Важно: foreground-start
+                        androidx.core.content.ContextCompat.startForegroundService(ctx, i)
                     }
                 ) { Text("Запустить оверлей") }
 
                 OutlinedButton(onClick = {
-                    val i = Intent(ctx, OverlayService::class.java)
-                    i.action = OverlayService.ACTION_STOP
+                    val i = Intent(ctx, OverlayService::class.java).apply {
+                        action = OverlayService.ACTION_STOP
+                    }
                     ctx.startService(i)
                 }) { Text("Остановить") }
             }
 
             Spacer(Modifier.height(16.dp))
             Text(
-                "Советы:\n— Скачайте офлайн‑голоса TTS (EN/RU) в настройках телефона\n— На Xiaomi включите Плавающие окна, Автозапуск и «Без ограничений» для батареи",
+                "Советы:\n— Скачайте офлайн‑голоса TTS (EN/RU)\n— На Xiaomi включите Плавающие окна, Автозапуск и «Без ограничений»",
                 style = MaterialTheme.typography.bodySmall
             )
         }
     }
 
-    // Обновляем флаг после возвращения из настроек оверлея
     LaunchedEffect(Unit) {
         overlayGranted = Settings.canDrawOverlays(ctx)
     }
