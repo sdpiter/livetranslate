@@ -12,7 +12,7 @@ android {
         minSdk = 24
         targetSdk = 34
         versionCode = 1
-        versionName = "0.1-alpha0"
+        versionName = "0.1-alpha1"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -56,6 +56,15 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")
     implementation("androidx.core:core-ktx:1.13.1")
 
-    // Добавляем Material (даёт темы Theme.Material3.*)
+    // Материал — даёт темы Material3
     implementation("com.google.android.material:material:1.12.0")
+
+    // Перевод офлайн (ML Kit)
+    implementation("com.google.mlkit:translate:17.0.2")
+
+    // Коррутины
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // Разрешения (упростим запросы в онбординге)
+    implementation("com.google.accompanist:accompanist-permissions:0.34.0")
 }
