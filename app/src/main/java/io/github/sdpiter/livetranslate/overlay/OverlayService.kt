@@ -1,6 +1,10 @@
 package io.github.sdpiter.livetranslate.overlay
 
-import android.app.*
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -18,12 +22,26 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color as CColor
+import androidx.compose.ui.graphics.Color as C
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationCompat
@@ -32,8 +50,12 @@ import io.github.sdpiter.livetranslate.R
 import io.github.sdpiter.livetranslate.asr.SpeechRecognizerEngine
 import io.github.sdpiter.livetranslate.mt.MlKitTranslator
 import io.github.sdpiter.livetranslate.tts.TtsEngine
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 
 class OverlayService : Service() {
 
@@ -70,11 +92,11 @@ class OverlayService : Service() {
             } else startForeground(NOTIF_ID, note)
         } catch (e: Exception) {
             Toast.makeText(this, "FGS не запустился: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
-            updateNotification("FGS не запустился")
+            updateNotification("FGS не запустился — проверьте уведомления")
         }
 
         if (!Settings.canDrawOverlays(this)) {
-            updateNotification("Нет права overlay")
+            updateNotification("Нужно разрешение overlay")
             val i = Intent(
                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                 Uri.parse("package:$packageName")
@@ -94,7 +116,7 @@ class OverlayService : Service() {
         return START_STICKY
     }
 
-    private fun noteIntent(): PendingIntent {
+    private fun contentIntent(): PendingIntent {
         val i = Intent(this, MainActivity::class.java)
         val flags = if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
         return PendingIntent.getActivity(this, 0, i, flags)
@@ -105,7 +127,7 @@ class OverlayService : Service() {
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("LiveTranslate")
             .setContentText(text)
-            .setContentIntent(noteIntent())
+            .setContentIntent(contentIntent())
             .setOngoing(true)
             .build()
 
@@ -136,7 +158,6 @@ class OverlayService : Service() {
     }
 
     private fun safeLp(): WindowManager.LayoutParams {
-        // Минимальный набор флагов, чтобы исключить проблемы с фокусом/положением
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -165,7 +186,7 @@ class OverlayService : Service() {
             }
             addView(tv)
         }
-        val lp = safeLp().apply { y = 0 } // шапка сверху
+        val lp = safeLp().apply { y = 0 }
         try {
             wm.addView(layout, lp)
             debugView = layout
@@ -177,9 +198,7 @@ class OverlayService : Service() {
 
     private fun tryShowOverlay() {
         try {
-            // 1) Добавим debug‑полосу обычным View
             addDebugBar()
-            // 2) Основная панель на Compose
             showOverlay()
             updateNotification("Оверлей активен")
         } catch (e: Exception) {
@@ -241,9 +260,9 @@ class OverlayService : Service() {
             modifier = Modifier
                 .fillMaxWidth()
                 .wrapContentHeight()
-                .padding(horizontal = 8.dp, vertical = 64.dp) // отступ, чтобы не прятаться под статусбар
-                .background(CColor(0xAA000000)),
-            color = CColor(0xCC222222)
+                .padding(horizontal = 8.dp, vertical = 64.dp)
+                .background(C(0xAA000000)),
+            color = C(0xCC222222)
         ) {
             Column(
                 Modifier.fillMaxWidth().padding(10.dp),
@@ -254,21 +273,20 @@ class OverlayService : Service() {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("LiveTranslate", color = CColor.White)
-                    Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
-                        Text(if (listening) "●" else "○",
-                            color = if (listening) CColor(0xFF58E6D9)) else CColor.LightGray)
-                        Text("Swap", color = CColor.White,
-                            modifier = androidx.compose.ui.Modifier.clickable { onSwap() })
-                        Text("✕", color = CColor.White,
-                            modifier = androidx.compose.ui.Modifier.clickable { onClose() })
+                    Text("LiveTranslate", color = C.White)
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            if (listening) "●" else "○",
+                            color = if (listening) C(0xFF58E6D9) else C.LightGray
+                        )
+                        Text("Swap", color = C.White, modifier = Modifier.clickable { onSwap() })
+                        Text("✕", color = C.White, modifier = Modifier.clickable { onClose() })
                     }
                 }
-                if (lastOriginal.isNotBlank()) Text(lastOriginal, color = CColor(0xFFB0BEC5))
-                if (lastTranslated.isNotBlank()) Text(lastTranslated, color = CColor.White)
+                if (lastOriginal.isNotBlank()) Text(lastOriginal, color = C(0xFFB0BEC5))
+                if (lastTranslated.isNotBlank()) Text(lastTranslated, color = C.White)
 
-                Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Button(onClick = { isDialog = false; startListening(); listening = true }) { Text("Субтитры") }
                     Button(onClick = { isDialog = true;  startListening(); listening = true }) { Text("Диалог") }
                     OutlinedButton(onClick = {
