@@ -4,6 +4,7 @@ import android.app.*
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.net.Uri
 import android.os.Build
@@ -12,6 +13,8 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,7 +23,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Color as CColor
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationCompat
@@ -43,6 +46,7 @@ class OverlayService : Service() {
 
     private lateinit var wm: WindowManager
     private var overlayView: View? = null
+    private var debugView: View? = null
     private val scope = CoroutineScope(Dispatchers.Main.immediate)
 
     private lateinit var asr: SpeechRecognizerEngine
@@ -63,19 +67,20 @@ class OverlayService : Service() {
         try {
             if (Build.VERSION.SDK_INT >= 29) {
                 startForeground(NOTIF_ID, note, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-            } else {
-                startForeground(NOTIF_ID, note)
-            }
+            } else startForeground(NOTIF_ID, note)
         } catch (e: Exception) {
             Toast.makeText(this, "FGS не запустился: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
-            updateNotification("FGS не запустился — проверьте уведомления")
-            openNotificationSettings()
+            updateNotification("FGS не запустился")
         }
 
         if (!Settings.canDrawOverlays(this)) {
-            updateNotification("Нужно разрешение overlay")
-            openOverlaySettings()
-            Toast.makeText(this, "Разрешите «поверх других приложений» и вернитесь", Toast.LENGTH_LONG).show()
+            updateNotification("Нет права overlay")
+            val i = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(i)
+            Toast.makeText(this, "Дайте «Появление поверх других приложений»", Toast.LENGTH_LONG).show()
             retryShowOverlay()
         } else {
             tryShowOverlay()
@@ -89,7 +94,7 @@ class OverlayService : Service() {
         return START_STICKY
     }
 
-    private fun contentIntent(): PendingIntent {
+    private fun noteIntent(): PendingIntent {
         val i = Intent(this, MainActivity::class.java)
         val flags = if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
         return PendingIntent.getActivity(this, 0, i, flags)
@@ -100,7 +105,7 @@ class OverlayService : Service() {
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("LiveTranslate")
             .setContentText(text)
-            .setContentIntent(contentIntent())
+            .setContentIntent(noteIntent())
             .setOngoing(true)
             .build()
 
@@ -117,34 +122,6 @@ class OverlayService : Service() {
         }
     }
 
-    private fun openNotificationSettings() {
-        if (Build.VERSION.SDK_INT >= 26) {
-            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(intent)
-        }
-    }
-
-    private fun openOverlaySettings() {
-        val intent = Intent(
-            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-            Uri.parse("package:$packageName")
-        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        startActivity(intent)
-    }
-
-    private fun tryShowOverlay() {
-        try {
-            showOverlay()
-            updateNotification("Оверлей активен")
-            Toast.makeText(this, "Оверлей активен", Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
-            updateNotification("Ошибка overlay: ${e.javaClass.simpleName}")
-            Toast.makeText(this, "Ошибка overlay: ${e.message}", Toast.LENGTH_LONG).show()
-        }
-    }
-
     private fun retryShowOverlay() {
         scope.launch {
             repeat(12) {
@@ -154,14 +131,12 @@ class OverlayService : Service() {
                     return@launch
                 }
             }
-            updateNotification("Разрешение overlay не выдано")
+            updateNotification("Overlay не выдан")
         }
     }
 
-    private fun showOverlay() {
-        if (!Settings.canDrawOverlays(this)) throw SecurityException("Overlay permission missing")
-        if (overlayView != null) return
-
+    private fun safeLp(): WindowManager.LayoutParams {
+        // Минимальный набор флагов, чтобы исключить проблемы с фокусом/положением
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -169,13 +144,55 @@ class OverlayService : Service() {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else WindowManager.LayoutParams.TYPE_PHONE,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         )
-        lp.gravity = Gravity.TOP
+        lp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
         lp.y = 40
+        return lp
+    }
 
+    private fun addDebugBar() {
+        if (debugView != null) return
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(0xCCFF1744.toInt()) // алый
+            val tv = TextView(this@OverlayService).apply {
+                text = "DEBUG OVERLAY (должен быть виден)"
+                setTextColor(Color.WHITE)
+                textSize = 14f
+                setPadding(24, 16, 24, 16)
+            }
+            addView(tv)
+        }
+        val lp = safeLp().apply { y = 0 } // шапка сверху
+        try {
+            wm.addView(layout, lp)
+            debugView = layout
+            Toast.makeText(this, "Debug‑полоса добавлена", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Ошибка debug‑оверлея: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun tryShowOverlay() {
+        try {
+            // 1) Добавим debug‑полосу обычным View
+            addDebugBar()
+            // 2) Основная панель на Compose
+            showOverlay()
+            updateNotification("Оверлей активен")
+        } catch (e: Exception) {
+            updateNotification("Ошибка overlay: ${e.javaClass.simpleName}")
+            Toast.makeText(this, "Ошибка overlay: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun showOverlay() {
+        if (!Settings.canDrawOverlays(this)) throw SecurityException("Overlay permission missing")
+        if (overlayView != null) return
+
+        val lp = safeLp()
         val view = ComposeView(this).apply {
             setContent {
                 MaterialTheme {
@@ -193,6 +210,7 @@ class OverlayService : Service() {
         }
         wm.addView(view, lp)
         overlayView = view
+        Toast.makeText(this, "Основная панель добавлена", Toast.LENGTH_SHORT).show()
     }
 
     @Composable
@@ -220,22 +238,37 @@ class OverlayService : Service() {
         }
 
         Surface(
-            modifier = Modifier.fillMaxWidth().wrapContentHeight().padding(8.dp).background(Color(0xAA000000)),
-            color = Color(0xCC222222)
+            modifier = Modifier
+                .fillMaxWidth()
+                .wrapContentHeight()
+                .padding(horizontal = 8.dp, vertical = 64.dp) // отступ, чтобы не прятаться под статусбар
+                .background(CColor(0xAA000000)),
+            color = CColor(0xCC222222)
         ) {
-            Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("LiveTranslate", color = Color.White)
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(if (listening) "●" else "○", color = if (listening) Color(0xFF58E6D9) else Color.LightGray)
-                        Text("Swap", color = Color.White, modifier = Modifier.clickable { onSwap() })
-                        Text("✕", color = Color.White, modifier = Modifier.clickable { onClose() })
+            Column(
+                Modifier.fillMaxWidth().padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("LiveTranslate", color = CColor.White)
+                    Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
+                        Text(if (listening) "●" else "○",
+                            color = if (listening) CColor(0xFF58E6D9)) else CColor.LightGray)
+                        Text("Swap", color = CColor.White,
+                            modifier = androidx.compose.ui.Modifier.clickable { onSwap() })
+                        Text("✕", color = CColor.White,
+                            modifier = androidx.compose.ui.Modifier.clickable { onClose() })
                     }
                 }
-                if (lastOriginal.isNotBlank()) Text(lastOriginal, color = Color(0xFFB0BEC5))
-                if (lastTranslated.isNotBlank()) Text(lastTranslated, color = Color.White)
+                if (lastOriginal.isNotBlank()) Text(lastOriginal, color = CColor(0xFFB0BEC5))
+                if (lastTranslated.isNotBlank()) Text(lastTranslated, color = CColor.White)
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
                     Button(onClick = { isDialog = false; startListening(); listening = true }) { Text("Субтитры") }
                     Button(onClick = { isDialog = true;  startListening(); listening = true }) { Text("Диалог") }
                     OutlinedButton(onClick = {
@@ -257,7 +290,9 @@ class OverlayService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         try { overlayView?.let { wm.removeView(it) } } catch (_: Exception) {}
+        try { debugView?.let { wm.removeView(it) } } catch (_: Exception) {}
         overlayView = null
+        debugView = null
         if (this::asr.isInitialized) asr.stop()
         if (this::tts.isInitialized) tts.shutdown()
         scope.cancel()
