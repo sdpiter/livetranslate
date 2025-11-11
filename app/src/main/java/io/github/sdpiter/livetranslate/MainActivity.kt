@@ -1,6 +1,7 @@
 package io.github.sdpiter.livetranslate
 
 import android.Manifest
+import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -21,8 +22,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import io.github.sdpiter.livetranslate.overlay.OverlayService
 import io.github.sdpiter.livetranslate.debug.FgTestService
+import io.github.sdpiter.livetranslate.overlay.OverlayService
 
 class MainActivity : ComponentActivity() {
 
@@ -47,34 +48,41 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
     val ctx = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Микрофон
+    // Статусы
+    fun notifEnabled(): Boolean {
+        val nm = ctx.getSystemService(NotificationManager::class.java)
+        return if (Build.VERSION.SDK_INT >= 24) nm.areNotificationsEnabled() else true
+    }
+
     var micGranted by remember {
         mutableStateOf(
-            ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO)
-                    == PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
         )
     }
-    val micLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted -> micGranted = granted }
+    val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        micGranted = it
+    }
 
-    // Overlay (для статуса)
     var overlayGranted by remember { mutableStateOf(Settings.canDrawOverlays(ctx)) }
+    var notificationsGranted by remember { mutableStateOf(notifEnabled()) }
+
+    // Обновляем статусы при возврате
     DisposableEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, e ->
-            if (e == Lifecycle.Event.ON_RESUME) overlayGranted = Settings.canDrawOverlays(ctx)
+            if (e == Lifecycle.Event.ON_RESUME) {
+                overlayGranted = Settings.canDrawOverlays(ctx)
+                notificationsGranted = notifEnabled()
+            }
         }
         lifecycleOwner.lifecycle.addObserver(obs)
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
 
     Surface(Modifier.fillMaxSize()) {
-        Column(
-            Modifier.fillMaxSize().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
+        Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("LiveTranslate α", style = MaterialTheme.typography.headlineSmall)
-            Text("1) Разрешите микрофон и overlay\n2) «Запустить оверлей»\n3) Выберите режим",
+            Text("Статус: Микрофон=" + micGranted + " • Overlay=" + overlayGranted + " • Уведомл.=" + notificationsGranted,
                 style = MaterialTheme.typography.bodySmall)
 
             Button(onClick = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }) {
@@ -82,44 +90,41 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
             }
 
             Button(onClick = {
-                if (!Settings.canDrawOverlays(ctx)) {
-                    val intent = Intent(
-                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:${ctx.packageName}")
-                    )
-                    ctx.startActivity(intent)
-                } else overlayGranted = true
-            }) { Text(if (overlayGranted) "Overlay: разрешён" else "Разрешить «поверх окон»") }
+                val i = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${ctx.packageName}"))
+                ctx.startActivity(i)
+            }) { Text("Открыть настройки «поверх окон»") }
+
+            Button(onClick = {
+                val i = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName)
+                ctx.startActivity(i)
+            }) { Text("Открыть настройки уведомлений") }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Запускаем OverlayService как FGS. (Без типа — см. манифест)
                 Button(
                     enabled = micGranted,
                     onClick = {
                         askNotifPermission?.invoke()
-                        val i = Intent(ctx, OverlayService::class.java)
-                            .setAction(OverlayService.ACTION_START)
-                        // пробуем обычный startService — на 26+ система сама потребует startForeground в onCreate
-                        ctx.startService(i)
+                        val i = Intent(ctx, OverlayService::class.java).setAction(OverlayService.ACTION_START)
+                        // даём явный FGS старт
+                        ContextCompat.startForegroundService(ctx, i)
                     }
                 ) { Text("Запустить оверлей") }
 
                 OutlinedButton(onClick = {
-                    val i = Intent(ctx, OverlayService::class.java)
-                        .setAction(OverlayService.ACTION_STOP)
+                    val i = Intent(ctx, OverlayService::class.java).setAction(OverlayService.ACTION_STOP)
                     ctx.startService(i)
                 }) { Text("Остановить") }
             }
 
-            // Отдельно: тест запуска Foreground‑сервиса (только уведомление)
             OutlinedButton(onClick = {
                 askNotifPermission?.invoke()
                 val i = Intent(ctx, FgTestService::class.java)
                 ContextCompat.startForegroundService(ctx, i)
             }) { Text("Тест уведомления (FGS)") }
 
-            Spacer(Modifier.height(16.dp))
-            Text("Советы:\n— Включите уведомления для LiveTranslate (Android 13+)\n— На Samsung: Появление поверх → Разрешить; Батарея → Без ограничений",
+            Spacer(Modifier.height(12.dp))
+            Text("Если уведомления выключены — включите их для LiveTranslate. На Samsung также отключите агрессивную экономию энергии для приложения.",
                 style = MaterialTheme.typography.bodySmall)
         }
     }
