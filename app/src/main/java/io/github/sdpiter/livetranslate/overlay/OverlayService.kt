@@ -32,6 +32,7 @@ import io.github.sdpiter.livetranslate.R
 import io.github.sdpiter.livetranslate.asr.SpeechRecognizerEngine
 import io.github.sdpiter.livetranslate.mt.MlKitTranslator
 import io.github.sdpiter.livetranslate.tts.TtsEngine
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.*
 
 class OverlayService : Service() {
