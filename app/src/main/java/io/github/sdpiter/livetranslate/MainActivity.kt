@@ -31,14 +31,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         val notifLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
-        askNotifPermission = {
-            if (Build.VERSION.SDK_INT >= 33) {
-                notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }
-
+        askNotifPermission = { if (Build.VERSION.SDK_INT >= 33) notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
         setContent { MaterialTheme { Landing(askNotifPermission) } }
     }
 }
@@ -53,23 +47,15 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
         return if (Build.VERSION.SDK_INT >= 24) nm.areNotificationsEnabled() else true
     }
     fun isAccEnabled(): Boolean {
-        val enabled = Settings.Secure.getString(
-            ctx.contentResolver,
-            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-        )
+        val enabled = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
         val svc = "${ctx.packageName}/io.github.sdpiter.livetranslate.accessibility.LtAccessibilityService"
         return enabled?.split(':')?.contains(svc) == true
     }
 
     var micGranted by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO)
-                == PackageManager.PERMISSION_GRANTED
-        )
+        mutableStateOf(ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
     }
-    val micLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted -> micGranted = granted }
+    val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { micGranted = it }
 
     var overlayGranted by remember { mutableStateOf(Settings.canDrawOverlays(ctx)) }
     var notificationsGranted by remember { mutableStateOf(notifEnabled()) }
@@ -88,43 +74,34 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
     }
 
     Surface(Modifier.fillMaxSize()) {
-        Column(
-            Modifier.fillMaxSize().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
+        Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("LiveTranslate α", style = MaterialTheme.typography.headlineSmall)
-            Text(
-                "Статус: Микрофон=$micGranted • Overlay=$overlayGranted • Уведомл.=$notificationsGranted • Доступность=$accEnabled",
-                style = MaterialTheme.typography.bodySmall
-            )
+            Text("Статус: Микрофон=$micGranted • Overlay=$overlayGranted • Уведомл.=$notificationsGranted • Доступность=$accEnabled",
+                style = MaterialTheme.typography.bodySmall)
 
             Button(onClick = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }) {
                 Text(if (micGranted) "Микрофон: разрешён" else "Разрешить микрофон")
             }
-
             Button(onClick = {
                 val i = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${ctx.packageName}"))
                 ctx.startActivity(i)
             }) { Text("Открыть настройки «поверх окон»") }
-
             Button(onClick = {
-                val i = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                    .putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName)
+                val i = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName)
                 ctx.startActivity(i)
             }) { Text("Открыть настройки уведомлений") }
-
             Button(onClick = {
                 val i = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
                 ctx.startActivity(i)
             }) { Text(if (accEnabled) "Спец. возможности: включено" else "Открыть Спец. возможности") }
 
+            // FGS-путь оставлен как вспомогательный
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     enabled = micGranted,
                     onClick = {
                         askNotifPermission?.invoke()
-                        val i = Intent(ctx, OverlayService::class.java)
-                            .setAction(OverlayService.ACTION_START)
+                        val i = Intent(ctx, OverlayService::class.java).setAction(OverlayService.ACTION_START)
                         ContextCompat.startForegroundService(ctx, i)
                     }
                 ) { Text("Запустить оверлей (FGS)") }
@@ -141,10 +118,7 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
             }) { Text("Тест уведомления (FGS)") }
 
             Spacer(Modifier.height(12.dp))
-            Text(
-                "Для стабильного окна на Samsung включите службу в «Спец. возможности».",
-                style = MaterialTheme.typography.bodySmall
-            )
+            Text("Для Samsung используйте «Спец. возможности» — окно стабильнее, чем через FGS.", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
