@@ -5,7 +5,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- Тип FGS (microphone) не указываем, чтобы прошивка не гасила сервис на старте -->
+    <!-- Типовые разрешения FGS (Android 14+) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
         android:allowBackup="true"
@@ -23,14 +25,16 @@
             </intent-filter>
         </activity>
 
-        <!-- Оверлей-сервис (foreground) -->
+        <!-- Оверлей (нужен микрофон дальше, поэтому foregroundServiceType="microphone") -->
         <service
             android:name=".overlay.OverlayService"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
-        <!-- Тестовый foreground-сервис (только уведомление) -->
+        <!-- Тестовый FGS: уведомление/таймер, тип dataSync -->
         <service
             android:name=".debug.FgTestService"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>
