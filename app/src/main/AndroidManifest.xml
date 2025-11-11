@@ -4,7 +4,7 @@
         android:label="LiveTranslate"
         android:icon="@mipmap/ic_launcher"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Material3.DayNight">
+        android:theme="@style/Theme.LiveTranslate">
         <activity
             android:name=".MainActivity"
             android:exported="true">
