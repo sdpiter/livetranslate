@@ -32,8 +32,8 @@ import io.github.sdpiter.livetranslate.R
 import io.github.sdpiter.livetranslate.asr.SpeechRecognizerEngine
 import io.github.sdpiter.livetranslate.mt.MlKitTranslator
 import io.github.sdpiter.livetranslate.tts.TtsEngine
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.collectLatest
 
 class OverlayService : Service() {
 
@@ -44,7 +44,7 @@ class OverlayService : Service() {
         private const val CHANNEL_ID = "lt_channel"
     }
 
-    private lateinit var windowManager: WindowManager
+    private lateinit var wm: WindowManager
     private var overlayView: View? = null
     private val scope = CoroutineScope(Dispatchers.Main.immediate)
 
@@ -59,20 +59,19 @@ class OverlayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createNotifChannel()
-        startForeground(NOTIF_ID, buildNotification("Starting..."))
+        startForeground(NOTIF_ID, buildNotification("Запуск…"))
 
+        // Проверяем overlay-права. Если нет — ведём пользователя.
         if (!Settings.canDrawOverlays(this)) {
             updateNotification("Нет разрешения overlay — откройте настройки")
-            // Откроем страницу разрешения
             val intent = Intent(
                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                 Uri.parse("package:$packageName")
             ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(intent)
             Toast.makeText(this, "Разрешите «поверх других приложений»", Toast.LENGTH_LONG).show()
-            // продолжим работу — если дадут право, окно появится при повторном запуске
         }
 
         asr = SpeechRecognizerEngine(this)
@@ -112,14 +111,15 @@ class OverlayService : Service() {
     }
 
     private fun updateNotification(text: String) {
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(NOTIF_ID, buildNotification(text))
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .notify(NOTIF_ID, buildNotification(text))
     }
 
     private fun createNotifChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
             val ch = NotificationChannel(CHANNEL_ID, "LiveTranslate", NotificationManager.IMPORTANCE_LOW)
-            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(ch)
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                .createNotificationChannel(ch)
         }
     }
 
@@ -148,9 +148,9 @@ class OverlayService : Service() {
                     OverlayUI(
                         onClose = { stopSelf() },
                         onSwap = {
-                            val wasListenRu = listenLang.startsWith("ru", true)
-                            listenLang = if (wasListenRu) "en-US" else "ru-RU"
-                            targetLang = if (wasListenRu) "ru" else "en"
+                            val wasRu = listenLang.startsWith("ru", true)
+                            listenLang = if (wasRu) "en-US" else "ru-RU"
+                            targetLang = if (wasRu) "ru" else "en"
                             updateNotification("Направление: $listenLang → $targetLang")
                         }
                     )
@@ -158,7 +158,7 @@ class OverlayService : Service() {
             }
         }
 
-        windowManager.addView(view, lp)
+        wm.addView(view, lp)
         overlayView = view
     }
 
@@ -195,9 +195,7 @@ class OverlayService : Service() {
             color = Color(0xCC222222)
         ) {
             Column(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(10.dp),
+                Modifier.fillMaxWidth().padding(10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(
@@ -207,7 +205,8 @@ class OverlayService : Service() {
                 ) {
                     Text("LiveTranslate", color = Color.White)
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(if (listening) "●" else "○", color = if (listening) Color(0xFF58E6D9) else Color.LightGray)
+                        Text(if (listening) "●" else "○",
+                            color = if (listening) Color(0xFF58E6D9) else Color.LightGray)
                         Text("Swap", color = Color.White, modifier = Modifier.clickable { onSwap() })
                         Text("✕", color = Color.White, modifier = Modifier.clickable { onClose() })
                     }
@@ -236,7 +235,7 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        try { overlayView?.let { windowManager.removeView(it) } } catch (_: Exception) {}
+        try { overlayView?.let { wm.removeView(it) } } catch (_: Exception) {}
         overlayView = null
         asr.stop()
         tts.shutdown()
