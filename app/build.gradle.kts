@@ -64,8 +64,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
-    // Vosk ASR (правильный артефакт!)
-    implementation("org.vosk:vosk-android:0.3.45")
-    // Если вдруг 0.3.45 недоступна в их репо — попробуйте 0.3.44:
-    // implementation("org.vosk:vosk-android:0.3.44")
+    // Vosk ASR — верная координата!
+    implementation("com.alphacephei:vosk-android:0.3.45")
+    // Если вдруг их репозиторий отдаёт 404 на 0.3.45 — попробуй одну из:
+    // implementation("com.alphacephei:vosk-android:0.3.44")
+    // implementation("com.alphacephei:vosk-android:0.3.42")
+    // implementation("com.alphacephei:vosk-android:0.3.38")
 }
