@@ -12,9 +12,14 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import io.github.sdpiter.livetranslate.asr.SpeechRecognizerEngine
+import io.github.sdpiter.livetranslate.mt.MlKitTranslator
+import io.github.sdpiter.livetranslate.tts.TtsEngine
+import kotlinx.coroutines.*
 
 class LtAccessibilityService : AccessibilityService() {
 
@@ -25,14 +30,26 @@ class LtAccessibilityService : AccessibilityService() {
     }
 
     private lateinit var wm: WindowManager
-    private var bar: View? = null
+    private var panel: View? = null
+
+    // Core
+    private val scope = CoroutineScope(Dispatchers.Main.immediate)
+    private lateinit var asr: SpeechRecognizerEngine
+    private lateinit var translator: MlKitTranslator
+    private lateinit var tts: TtsEngine
+
+    private var listenLang = "en-US"
+    private var targetLang = "ru"
+    private var dialogMode = false
+    private var listening = false
+    private var collectJob: Job? = null
 
     private val controlReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
-                ACTION_SHOW -> showBar()
-                ACTION_HIDE -> removeBar()
-                ACTION_TOGGLE -> if (bar == null) showBar() else removeBar()
+                ACTION_SHOW   -> showPanel()
+                ACTION_HIDE   -> hidePanel()
+                ACTION_TOGGLE -> if (panel == null) showPanel() else hidePanel()
             }
         }
     }
@@ -41,7 +58,7 @@ class LtAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
 
-        // Регистрация приёмника c флагами для Android 14+
+        // Register broadcast receiver with required flags on Android 14+
         val filter = IntentFilter().apply {
             addAction(ACTION_SHOW)
             addAction(ACTION_HIDE)
@@ -55,15 +72,19 @@ class LtAccessibilityService : AccessibilityService() {
                 registerReceiver(controlReceiver, filter)
             }
         } catch (e: Exception) {
-            Toast.makeText(this, "Ошибка регистрации receiver: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Receiver error: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
         }
 
-        showBar()
-        Toast.makeText(this, "LiveTranslate overlay (Accessibility) включён", Toast.LENGTH_SHORT).show()
+        // Init engines (лёгко и безопасно)
+        asr = SpeechRecognizerEngine(this)
+        translator = MlKitTranslator()
+        tts = TtsEngine(this)
+
+        Toast.makeText(this, "LiveTranslate (Accessibility) готово", Toast.LENGTH_SHORT).show()
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) { /* not used */ }
-    override fun onInterrupt() { /* not used */ }
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onInterrupt() {}
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
@@ -71,54 +92,138 @@ class LtAccessibilityService : AccessibilityService() {
         return WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            // TYPE_ACCESSIBILITY_OVERLAY — не требует FGS
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            y = 0
+            y = 40
         }
     }
 
-    private fun showBar() {
-        if (bar != null) return
-        val row = LinearLayout(this).apply {
+    private fun showPanel() {
+        if (panel != null) return
+
+        // UI (чистые View)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(0xCC222222.toInt())
+            setPadding(dp(12), dp(10), dp(12), dp(12))
+        }
+
+        val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(0xCC673AB7.toInt()) // фиолетовый
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-
             val title = TextView(this@LtAccessibilityService).apply {
-                setTextColor(Color.WHITE)
-                textSize = 16f
-                text = "LiveTranslate — Accessibility overlay активен"
+                setTextColor(Color.WHITE); textSize = 16f; text = "LiveTranslate (Accessibility)"
             }
-            val close = TextView(this@LtAccessibilityService).apply {
-                setTextColor(Color.WHITE)
-                textSize = 18f
-                text = "   ✕"
-                setOnClickListener { removeBar() }
+            val btnSwap = TextView(this@LtAccessibilityService).apply {
+                setTextColor(Color.WHITE); textSize = 16f; text = "  Swap"
+                setOnClickListener {
+                    val wasRu = listenLang.startsWith("ru", true)
+                    listenLang = if (wasRu) "en-US" else "ru-RU"
+                    targetLang = if (wasRu) "ru" else "en"
+                    dir.text = "Направление: ${if (listenLang.startsWith("ru")) "RU" else "EN"} → ${targetLang.uppercase()}"
+                }
             }
-            addView(title)
-            addView(close)
+            val btnClose = TextView(this@LtAccessibilityService).apply {
+                setTextColor(Color.WHITE); textSize = 18f; text = "   ✕"
+                setOnClickListener { hidePanel() }
+            }
+            addView(title); addView(btnSwap); addView(btnClose)
         }
+
+        val dir = TextView(this).apply {
+            setTextColor(0xFFB0BEC5.toInt()); textSize = 14f
+            text = "Направление: EN → RU"
+        }
+
+        val tvOriginal = TextView(this).apply {
+            setTextColor(0xFFB0BEC5.toInt()); textSize = 14f
+            text = ""
+        }
+        val tvTranslated = TextView(this).apply {
+            setTextColor(Color.WHITE); textSize = 16f
+            text = ""
+        }
+
+        val controls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            val btnSubs = Button(this@LtAccessibilityService).apply {
+                text = "Субтитры"
+                setOnClickListener { dialogMode = false; startListening(tvOriginal, tvTranslated) }
+            }
+            val btnDialog = Button(this@LtAccessibilityService).apply {
+                text = "Диалог"
+                setOnClickListener { dialogMode = true; startListening(tvOriginal, tvTranslated) }
+            }
+            val btnToggle = Button(this@LtAccessibilityService).apply {
+                text = "Пауза/Старт"
+                setOnClickListener {
+                    if (listening) stopListening() else startListening(tvOriginal, tvTranslated)
+                }
+            }
+            val btnClear = Button(this@LtAccessibilityService).apply {
+                text = "Очистить"
+                setOnClickListener { tvOriginal.text = ""; tvTranslated.text = "" }
+            }
+            addView(btnSubs); addView(btnDialog); addView(btnToggle); addView(btnClear)
+        }
+
+        root.addView(header)
+        root.addView(dir)
+        root.addView(tvOriginal)
+        root.addView(tvTranslated)
+        root.addView(controls)
+
         try {
-            wm.addView(row, params())
-            bar = row
+            wm.addView(root, params())
+            panel = root
         } catch (e: Exception) {
-            Toast.makeText(this, "Ошибка overlay: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Ошибка overlay(panel): ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
         }
     }
 
-    private fun removeBar() {
-        try { bar?.let { wm.removeView(it) } } catch (_: Exception) {}
-        bar = null
+    private fun hidePanel() {
+        try { panel?.let { wm.removeView(it) } } catch (_: Exception) {}
+        panel = null
+        stopListening()
+    }
+
+    private fun startListening(tvOriginal: TextView, tvTranslated: TextView) {
+        stopListening()
+        listening = true
+
+        collectJob = scope.launch {
+            // Подготовим переводчик (скачает пакет при необходимости)
+            try { translator.ensure(listenLang, targetLang) } catch (_: Exception) {}
+
+            // Собираем текст из ASR
+            launch {
+                asr.results.collect { text ->
+                    tvOriginal.text = text
+                    if (text.isNotBlank()) {
+                        val tr = try { translator.translate(text) } catch (_: Exception) { "" }
+                        tvTranslated.text = tr
+                        if (dialogMode && tr.isNotBlank()) tts.speak(tr, targetLang)
+                    }
+                }
+            }
+            asr.start(listenLang)
+        }
+    }
+
+    private fun stopListening() {
+        listening = false
+        try { asr.stop() } catch (_: Exception) {}
+        collectJob?.cancel()
+        collectJob = null
     }
 
     override fun onDestroy() {
         try { unregisterReceiver(controlReceiver) } catch (_: Exception) {}
-        removeBar()
+        hidePanel()
+        if (this::tts.isInitialized) tts.shutdown()
         super.onDestroy()
     }
 }
