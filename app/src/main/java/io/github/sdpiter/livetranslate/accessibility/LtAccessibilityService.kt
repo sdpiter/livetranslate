@@ -7,6 +7,7 @@ import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -44,7 +45,11 @@ class LtAccessibilityService : AccessibilityService() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val errHandler = CoroutineExceptionHandler { _, e ->
-        logE("CEH", e); mainHandler.post { Toast.makeText(this, "Ошибка: ${e.javaClass.simpleName}", Toast.LENGTH_SHORT).show() }
+        logE("CEH", e)
+        mainHandler.post {
+            Toast.makeText(this@LtAccessibilityService, "Ошибка: ${e.javaClass.simpleName}", Toast.LENGTH_SHORT).show()
+            updateStateUi()
+        }
     }
     private val uiScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + errHandler)
     private val workScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + errHandler)
@@ -81,14 +86,17 @@ class LtAccessibilityService : AccessibilityService() {
             addAction(ACTION_SHOW); addAction(ACTION_HIDE); addAction(ACTION_TOGGLE)
         }
         try {
-            if (Build.VERSION.SDK_INT >= 34) registerReceiver(controlReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-            else @Suppress("DEPRECATION") registerReceiver(controlReceiver, filter)
+            if (Build.VERSION.SDK_INT >= 34) {
+                registerReceiver(controlReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION") registerReceiver(controlReceiver, filter)
+            }
         } catch (e: Exception) { logE("registerReceiver", e) }
 
         vosk = VoskEngine(
             this,
-            onError = { logE("vosk", it); uiScope.launch { Toast.makeText(this@LtAccessibilityService, "ASR ошибка: ${it.javaClass.simpleName}", Toast.LENGTH_SHORT).show() } },
-            onInfo = { logI(it) }
+            onError = { logE("vosk", it) },
+            onInfo  = { logI(it) }
         )
         translator = MlKitTranslator()
         tts = TtsEngine(this)
@@ -109,16 +117,20 @@ class LtAccessibilityService : AccessibilityService() {
     ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = 40 }
 
     private fun row(): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL; weightSum = 3f
+        orientation = LinearLayout.HORIZONTAL
+        weightSum = 3f
     }
 
     private fun btn(label: String, onClick: () -> Unit): Button =
         Button(this).apply {
             text = label
+            isAllCaps = false
+            // одинаковая высота и одна строка — кнопки в одном уровне
             layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
                 val m = dp(6); setMargins(m, m, m, m)
             }
-            isAllCaps = false
+            setSingleLine(true)
+            ellipsize = TextUtils.TruncateAt.END
             setOnClickListener {
                 val now = System.currentTimeMillis()
                 if (!isToggling && now - lastTapTs >= 350) { lastTapTs = now; onClick() }
@@ -152,15 +164,17 @@ class LtAccessibilityService : AccessibilityService() {
         tvOriginalView = TextView(this).apply { setTextColor(0xFFB0BEC5.toInt()); textSize = 14f }
         tvTranslatedView = TextView(this).apply { setTextColor(Color.WHITE); textSize = 16f }
 
+        // Ряд 1
         val row1 = row().apply {
-            addView(btn("СУБТИТРЫ") { dialogMode = false; startSafe() })
-            addView(btn("ДИАЛОГ") { dialogMode = true; startSafe() })
+            addView(btn("Субтитры") { dialogMode = false; startSafe() })
+            addView(btn("Диалог") { dialogMode = true; startSafe() })
             btnStartPause = btn(if (listening) "Пауза" else "Старт") {
                 if (listening) stopSafe() else startSafe()
             }
             addView(btnStartPause)
         }
 
+        // Ряд 2
         val row2 = row().apply {
             addView(btn("Swap EN↔RU") { swap(restart = listening) })
             addView(btn("Очистить") { tvOriginalView?.text = ""; tvTranslatedView?.text = "" })
@@ -267,7 +281,7 @@ class LtAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    // логирование
+    // лог
     private fun logE(tag: String, e: Throwable) {
         try {
             val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
