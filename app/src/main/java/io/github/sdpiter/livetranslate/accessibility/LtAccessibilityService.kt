@@ -16,12 +16,17 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import io.github.sdpiter.livetranslate.asr.SpeechRecognizerEngine
 import io.github.sdpiter.livetranslate.asr.VoskEngine
 import io.github.sdpiter.livetranslate.mt.MlKitTranslator
 import io.github.sdpiter.livetranslate.tts.TtsEngine
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class LtAccessibilityService : AccessibilityService() {
 
@@ -38,18 +43,23 @@ class LtAccessibilityService : AccessibilityService() {
     private var dirView: TextView? = null
     private var tvOriginalView: TextView? = null
     private var tvTranslatedView: TextView? = null
-    private var btnAsrView: Button? = null
+    private var btnStartPause: Button? = null
 
-    // Scopes: UI и фон
-    private val uiScope = CoroutineScope(Dispatchers.Main.immediate)
-    private val workScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // Scopes + глобальный обработчик ошибок (не даём службе падать)
+    private val errHandler = CoroutineExceptionHandler { _, e ->
+        logE("CEH", e)
+        uiScope.launch {
+            Toast.makeText(this@LtAccessibilityService, "Ошибка: ${e.javaClass.simpleName}", Toast.LENGTH_SHORT).show()
+            updateStateUi()
+        }
+    }
+    private val uiScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + errHandler)
+    private val workScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + errHandler)
 
     // ASR/MT/TTS
-    private lateinit var asrSystem: SpeechRecognizerEngine
+    private var vosk: VoskEngine? = null           // только Vosk (без System ASR)
     private lateinit var translator: MlKitTranslator
     private lateinit var tts: TtsEngine
-    private var vosk: VoskEngine? = null
-    private var useVosk = true // по умолчанию Vosk — без пиликанья
 
     // Состояние
     private var listenLang = "en-US"
@@ -57,8 +67,11 @@ class LtAccessibilityService : AccessibilityService() {
     private var dialogMode = false
     private var listening = false
     private var collectJob: Job? = null
+
+    // защита от гонок старт/стоп
+    private val engineMutex = Mutex()
     private var isToggling = false
-    private var lastActionTs = 0L
+    private var lastTapTs = 0L
 
     private val controlReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -74,6 +87,7 @@ class LtAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
 
+        // регистрируем управление из приложения
         val filter = IntentFilter().apply {
             addAction(ACTION_SHOW); addAction(ACTION_HIDE); addAction(ACTION_TOGGLE)
         }
@@ -84,51 +98,43 @@ class LtAccessibilityService : AccessibilityService() {
                 @Suppress("DEPRECATION") registerReceiver(controlReceiver, filter)
             }
         } catch (e: Exception) {
-            Toast.makeText(this, "Receiver error: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+            logE("registerReceiver", e)
         }
 
-        asrSystem = SpeechRecognizerEngine(this)
+        // движки
+        vosk = VoskEngine(this)
         translator = MlKitTranslator()
         tts = TtsEngine(this)
-        vosk = VoskEngine(this)
 
-        Toast.makeText(this, "LiveTranslate (Accessibility) готово", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "LiveTranslate (A11y) готово", Toast.LENGTH_SHORT).show()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
     override fun onInterrupt() {}
 
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
-    private fun lpWindow(): WindowManager.LayoutParams =
-        WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
-        ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = 40 }
+    private fun lpWindow() = WindowManager.LayoutParams(
+        WindowManager.LayoutParams.MATCH_PARENT,
+        WindowManager.LayoutParams.WRAP_CONTENT,
+        WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+        PixelFormat.TRANSLUCENT
+    ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = 40 }
 
-    private fun btnLayoutParams(): LinearLayout.LayoutParams =
-        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-            val m = dp(6)
-            setMargins(m, m, m, m)
-        }
+    private fun row(): LinearLayout = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
 
-    private fun makeButton(label: String, onClick: () -> Unit): Button =
+    private fun btn(label: String, onClick: () -> Unit): Button =
         Button(this).apply {
             text = label
-            layoutParams = btnLayoutParams()
-            setOnClickListener { if (canClick()) onClick() }
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                val m = dp(6); setMargins(m, m, m, m)
+            }
+            setOnClickListener {
+                val now = System.currentTimeMillis()
+                if (now - lastTapTs >= 350 && !isToggling) { lastTapTs = now; onClick() }
+            }
         }
-
-    private fun canClick(minIntervalMs: Long = 400): Boolean {
-        val now = System.currentTimeMillis()
-        return if (now - lastActionTs >= minIntervalMs) {
-            lastActionTs = now; true
-        } else false
-    }
 
     private fun showPanel() {
         if (panel != null) return
@@ -139,64 +145,37 @@ class LtAccessibilityService : AccessibilityService() {
             setPadding(dp(12), dp(10), dp(12), dp(12))
         }
 
-        // Header
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+        val header = row().apply {
             val title = TextView(this@LtAccessibilityService).apply {
                 setTextColor(Color.WHITE); textSize = 16f; text = "LiveTranslate (Accessibility)"
             }
-            val btnClose = TextView(this@LtAccessibilityService).apply {
+            val close = TextView(this@LtAccessibilityService).apply {
                 setTextColor(Color.WHITE); textSize = 18f; text = "   ✕"
                 setOnClickListener { hidePanel() }
             }
             addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            addView(btnClose)
+            addView(close)
         }
 
-        // Direction label
         dirView = TextView(this).apply {
-            setTextColor(0xFFB0BEC5.toInt()); textSize = 14f
-            text = "Направление: EN → RU"
+            setTextColor(0xFFB0BEC5.toInt()); textSize = 14f; text = "Направление: EN → RU"
         }
+        tvOriginalView = TextView(this).apply { setTextColor(0xFFB0BEC5.toInt()); textSize = 14f }
+        tvTranslatedView = TextView(this).apply { setTextColor(Color.WHITE); textSize = 16f }
 
-        // Text outputs
-        tvOriginalView = TextView(this).apply {
-            setTextColor(0xFFB0BEC5.toInt()); textSize = 14f; text = ""
-        }
-        tvTranslatedView = TextView(this).apply {
-            setTextColor(Color.WHITE); textSize = 16f; text = ""
-        }
-
-        // Row 1: Subtitles, Dialog, Pause/Start (ровные ширины)
-        val row1 = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            addView(makeButton("Субтитры") { dialogMode = false; startListeningSafe() })
-            addView(makeButton("Диалог") { dialogMode = true; startListeningSafe() })
-            addView(makeButton(if (listening) "Пауза" else "Старт") {
-                if (listening) stopListeningSafe() else startListeningSafe()
-            }.also { btn ->
-                // обновлять подпись при смене состояния
-                uiScope.launch {
-                    // держим ссылку на кнопку
-                    // кнопку переименуем из start/stop в процессе
-                }
-            })
-        }
-
-        // Row 2: Swap, ASR:Vosk/System, Clear
-        val row2 = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            val btnSwap = makeButton("Swap EN↔RU") { swapLanguages(restart = listening) }
-            btnAsrView = makeButton(if (useVosk) "ASR: Vosk" else "ASR: System") {
-                useVosk = !useVosk
-                btnAsrView?.text = if (useVosk) "ASR: Vosk" else "ASR: System"
-                if (listening) {
-                    // мягкий перезапуск
-                    stopListeningSafe { startListeningSafe() }
-                }
+        val row1 = row().apply {
+            addView(btn("СУБТИТРЫ") { dialogMode = false; startSafe() })
+            addView(btn("ДИАЛОГ") { dialogMode = true; startSafe() })
+            btnStartPause = btn(if (listening) "ПАУЗА" else "СТАРТ") {
+                if (listening) stopSafe() else startSafe()
             }
-            val btnClear = makeButton("Очистить") { tvOriginalView?.text = ""; tvTranslatedView?.text = "" }
-            addView(btnSwap); addView(btnAsrView); addView(btnClear)
+            addView(btnStartPause)
+        }
+
+        val row2 = row().apply {
+            addView(btn("SWAP EN ↔ RU") { swap(restart = listening) })
+            addView(btn("ОЧИСТИТЬ") { tvOriginalView?.text = ""; tvTranslatedView?.text = "" })
+            addView(btn("СКРЫТЬ") { hidePanel() })
         }
 
         root.addView(header)
@@ -206,48 +185,49 @@ class LtAccessibilityService : AccessibilityService() {
         root.addView(row1)
         root.addView(row2)
 
-        try {
-            wm.addView(root, lpWindow())
-            panel = root
-        } catch (e: Exception) {
-            Toast.makeText(this, "Ошибка overlay(panel): ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+        try { wm.addView(root, lpWindow()); panel = root } catch (e: Exception) {
+            logE("addView", e)
+            Toast.makeText(this, "Ошибка overlay: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
         }
     }
 
     private fun hidePanel() {
         try { panel?.let { wm.removeView(it) } } catch (_: Exception) {}
         panel = null
-        stopListeningSafe()
+        stopSafe()
     }
 
-    private fun swapLanguages(restart: Boolean) {
+    private fun swap(restart: Boolean) {
         val wasRu = listenLang.startsWith("ru", true)
         listenLang = if (wasRu) "en-US" else "ru-RU"
         targetLang = if (wasRu) "ru" else "en"
         dirView?.text = "Направление: ${if (listenLang.startsWith("ru")) "RU" else "EN"} → ${targetLang.uppercase()}"
-        if (restart) {
-            stopListeningSafe { startListeningSafe() }
-        }
+        if (restart) stopSafe { startSafe() }
     }
 
-    private fun startListeningSafe() {
+    private fun updateStateUi() {
+        btnStartPause?.text = if (listening) "ПАУЗА" else "СТАРТ"
+    }
+
+    private fun startSafe() {
         if (isToggling) return
         isToggling = true
         workScope.launch {
-            try {
-                stopListeningInternal() // на всякий
-                translator.ensure(listenLang, targetLang) // фоново
-                listening = true
-                collectJob = launch {
-                    if (useVosk) {
-                        val v = vosk ?: return@launch
-                        launch {
+            engineMutex.withLock {
+                try {
+                    stopInternal() // страховка
+                    // подгружаем переводчик в фоне (ML Kit)
+                    try { translator.ensure(listenLang, targetLang) } catch (e: Exception) { logE("translator.ensure", e) }
+                    listening = true
+                    uiScope.launch { updateStateUi() }
+
+                    val v = vosk ?: return@withLock
+                    collectJob = launch(errHandler) {
+                        launch(errHandler) {
                             v.results.collectLatest { text ->
-                                uiScope.launch {
-                                    tvOriginalView?.text = text
-                                }
+                                uiScope.launch { tvOriginalView?.text = text }
                                 if (text.isNotBlank()) {
-                                    val tr = try { translator.translate(text) } catch (_: Exception) { "" }
+                                    val tr = try { translator.translate(text) } catch (e: Exception) { logE("translate", e); "" }
                                     uiScope.launch {
                                         tvTranslatedView?.text = tr
                                         if (dialogMode && tr.isNotBlank()) tts.speak(tr, targetLang)
@@ -256,58 +236,54 @@ class LtAccessibilityService : AccessibilityService() {
                             }
                         }
                         v.start(listenLang)
-                    } else {
-                        launch {
-                            asrSystem.results.collectLatest { text ->
-                                uiScope.launch {
-                                    tvOriginalView?.text = text
-                                }
-                                if (text.isNotBlank()) {
-                                    val tr = try { translator.translate(text) } catch (_: Exception) { "" }
-                                    uiScope.launch {
-                                        tvTranslatedView?.text = tr
-                                        if (dialogMode && tr.isNotBlank()) tts.speak(tr, targetLang)
-                                    }
-                                }
-                            }
-                        }
-                        asrSystem.start(listenLang)
                     }
-                }
-            } catch (_: Exception) {
-                uiScope.launch { Toast.makeText(this@LtAccessibilityService, "Ошибка старта", Toast.LENGTH_SHORT).show() }
-            } finally {
-                isToggling = false
+                } catch (e: Exception) {
+                    logE("startSafe", e)
+                    uiScope.launch { Toast.makeText(this@LtAccessibilityService, "Ошибка старта: ${e.javaClass.simpleName}", Toast.LENGTH_SHORT).show() }
+                } finally { isToggling = false }
             }
         }
     }
 
-    private fun stopListeningSafe(onStopped: (() -> Unit)? = null) {
+    private fun stopSafe(onStopped: (() -> Unit)? = null) {
         if (isToggling) return
         isToggling = true
         workScope.launch {
-            try {
-                stopListeningInternal()
-                uiScope.launch { /* можно обновить кнопки на “Старт” */ }
-                onStopped?.let { uiScope.launch { it() } }
-            } finally {
-                isToggling = false
+            engineMutex.withLock {
+                try {
+                    stopInternal()
+                    uiScope.launch { updateStateUi(); onStopped?.invoke() }
+                } catch (e: Exception) {
+                    logE("stopSafe", e)
+                } finally { isToggling = false }
             }
         }
     }
 
-    private suspend fun stopListeningInternal() {
+    private suspend fun stopInternal() {
+        if (!listening && collectJob == null) return
         listening = false
-        try { asrSystem.stop() } catch (_: Exception) {}
-        try { vosk?.stop() } catch (_: Exception) {}
         collectJob?.cancel()
         collectJob = null
+        try { vosk?.stopAndJoin() } catch (e: Exception) { logE("vosk.stopAndJoin", e) }
+        delay(120) // даём системе отпустить микрофон перед новым стартом
     }
 
     override fun onDestroy() {
         try { unregisterReceiver(controlReceiver) } catch (_: Exception) {}
-        hidePanel()
+        // Без runBlocking: быстро отпускаем ресурсы и выходим, чтобы не спровоцировать ANR
+        try { vosk?.stop() } catch (_: Exception) {}
+        try { panel?.let { wm.removeView(it) } } catch (_: Exception) {}
         if (this::tts.isInitialized) tts.shutdown()
         super.onDestroy()
+    }
+
+    // простое логирование в файл, чтобы понимать причину (app/files/lt.log)
+    private fun logE(tag: String, e: Throwable) {
+        try {
+            val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
+            val line = "$ts [$tag] ${e.javaClass.simpleName}: ${e.message}\n"
+            File(filesDir, "lt.log").appendText(line)
+        } catch (_: Exception) {}
     }
 }
