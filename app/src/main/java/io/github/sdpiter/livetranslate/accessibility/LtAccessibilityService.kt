@@ -40,20 +40,25 @@ class LtAccessibilityService : AccessibilityService() {
     private var tvTranslatedView: TextView? = null
     private var btnAsrView: Button? = null
 
-    // Core
-    private val scope = CoroutineScope(Dispatchers.Main.immediate)
+    // Scopes: UI и фон
+    private val uiScope = CoroutineScope(Dispatchers.Main.immediate)
+    private val workScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    // ASR/MT/TTS
     private lateinit var asrSystem: SpeechRecognizerEngine
     private lateinit var translator: MlKitTranslator
     private lateinit var tts: TtsEngine
     private var vosk: VoskEngine? = null
+    private var useVosk = true // по умолчанию Vosk — без пиликанья
 
-    private var useVosk = true  // по умолчанию Vosk (без пиликанья)
-
+    // Состояние
     private var listenLang = "en-US"
     private var targetLang = "ru"
     private var dialogMode = false
     private var listening = false
     private var collectJob: Job? = null
+    private var isToggling = false
+    private var lastActionTs = 0L
 
     private val controlReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -95,7 +100,7 @@ class LtAccessibilityService : AccessibilityService() {
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
-    private fun params(): WindowManager.LayoutParams =
+    private fun lpWindow(): WindowManager.LayoutParams =
         WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -104,6 +109,26 @@ class LtAccessibilityService : AccessibilityService() {
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = 40 }
+
+    private fun btnLayoutParams(): LinearLayout.LayoutParams =
+        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            val m = dp(6)
+            setMargins(m, m, m, m)
+        }
+
+    private fun makeButton(label: String, onClick: () -> Unit): Button =
+        Button(this).apply {
+            text = label
+            layoutParams = btnLayoutParams()
+            setOnClickListener { if (canClick()) onClick() }
+        }
+
+    private fun canClick(minIntervalMs: Long = 400): Boolean {
+        val now = System.currentTimeMillis()
+        return if (now - lastActionTs >= minIntervalMs) {
+            lastActionTs = now; true
+        } else false
+    }
 
     private fun showPanel() {
         if (panel != null) return
@@ -114,11 +139,7 @@ class LtAccessibilityService : AccessibilityService() {
             setPadding(dp(12), dp(10), dp(12), dp(12))
         }
 
-        dirView = TextView(this).apply {
-            setTextColor(0xFFB0BEC5.toInt()); textSize = 14f
-            text = "Направление: EN → RU"
-        }
-
+        // Header
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             val title = TextView(this@LtAccessibilityService).apply {
@@ -128,58 +149,65 @@ class LtAccessibilityService : AccessibilityService() {
                 setTextColor(Color.WHITE); textSize = 18f; text = "   ✕"
                 setOnClickListener { hidePanel() }
             }
-            addView(title); addView(btnClose)
+            addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(btnClose)
         }
 
-        tvOriginalView = TextView(this).apply { setTextColor(0xFFB0BEC5.toInt()); textSize = 14f }
-        tvTranslatedView = TextView(this).apply { setTextColor(Color.WHITE); textSize = 16f }
+        // Direction label
+        dirView = TextView(this).apply {
+            setTextColor(0xFFB0BEC5.toInt()); textSize = 14f
+            text = "Направление: EN → RU"
+        }
 
-        val controls = LinearLayout(this).apply {
+        // Text outputs
+        tvOriginalView = TextView(this).apply {
+            setTextColor(0xFFB0BEC5.toInt()); textSize = 14f; text = ""
+        }
+        tvTranslatedView = TextView(this).apply {
+            setTextColor(Color.WHITE); textSize = 16f; text = ""
+        }
+
+        // Row 1: Subtitles, Dialog, Pause/Start (ровные ширины)
+        val row1 = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
+            addView(makeButton("Субтитры") { dialogMode = false; startListeningSafe() })
+            addView(makeButton("Диалог") { dialogMode = true; startListeningSafe() })
+            addView(makeButton(if (listening) "Пауза" else "Старт") {
+                if (listening) stopListeningSafe() else startListeningSafe()
+            }.also { btn ->
+                // обновлять подпись при смене состояния
+                uiScope.launch {
+                    // держим ссылку на кнопку
+                    // кнопку переименуем из start/stop в процессе
+                }
+            })
+        }
 
-            val btnSubs = Button(this@LtAccessibilityService).apply {
-                text = "Субтитры"
-                setOnClickListener { dialogMode = false; startListening() }
-            }
-            val btnDialog = Button(this@LtAccessibilityService).apply {
-                text = "Диалог"
-                setOnClickListener { dialogMode = true; startListening() }
-            }
-            val btnToggle = Button(this@LtAccessibilityService).apply {
-                text = "Пауза/Старт"
-                setOnClickListener { if (listening) stopListening() else startListening() }
-            }
-            val btnSwap = Button(this@LtAccessibilityService).apply {
-                text = "Swap EN↔RU"
-                setOnClickListener { swapLanguages(restart = true) }
-            }
-            btnAsrView = Button(this@LtAccessibilityService).apply {
-                text = if (useVosk) "ASR: Vosk" else "ASR: System"
-                setOnClickListener {
-                    useVosk = !useVosk
-                    text = if (useVosk) "ASR: Vosk" else "ASR: System"
-                    if (listening) {
-                        stopListening()
-                        startListening()
-                    }
+        // Row 2: Swap, ASR:Vosk/System, Clear
+        val row2 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            val btnSwap = makeButton("Swap EN↔RU") { swapLanguages(restart = listening) }
+            btnAsrView = makeButton(if (useVosk) "ASR: Vosk" else "ASR: System") {
+                useVosk = !useVosk
+                btnAsrView?.text = if (useVosk) "ASR: Vosk" else "ASR: System"
+                if (listening) {
+                    // мягкий перезапуск
+                    stopListeningSafe { startListeningSafe() }
                 }
             }
-            val btnClear = Button(this@LtAccessibilityService).apply {
-                text = "Очистить"
-                setOnClickListener { tvOriginalView?.text = ""; tvTranslatedView?.text = "" }
-            }
-
-            addView(btnSubs); addView(btnDialog); addView(btnToggle); addView(btnSwap); addView(btnAsrView); addView(btnClear)
+            val btnClear = makeButton("Очистить") { tvOriginalView?.text = ""; tvTranslatedView?.text = "" }
+            addView(btnSwap); addView(btnAsrView); addView(btnClear)
         }
 
         root.addView(header)
         root.addView(dirView)
         root.addView(tvOriginalView)
         root.addView(tvTranslatedView)
-        root.addView(controls)
+        root.addView(row1)
+        root.addView(row2)
 
         try {
-            wm.addView(root, params())
+            wm.addView(root, lpWindow())
             panel = root
         } catch (e: Exception) {
             Toast.makeText(this, "Ошибка overlay(panel): ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
@@ -189,7 +217,7 @@ class LtAccessibilityService : AccessibilityService() {
     private fun hidePanel() {
         try { panel?.let { wm.removeView(it) } } catch (_: Exception) {}
         panel = null
-        stopListening()
+        stopListeningSafe()
     }
 
     private fun swapLanguages(restart: Boolean) {
@@ -197,51 +225,78 @@ class LtAccessibilityService : AccessibilityService() {
         listenLang = if (wasRu) "en-US" else "ru-RU"
         targetLang = if (wasRu) "ru" else "en"
         dirView?.text = "Направление: ${if (listenLang.startsWith("ru")) "RU" else "EN"} → ${targetLang.uppercase()}"
-        if (restart && listening) { stopListening(); startListening() }
+        if (restart) {
+            stopListeningSafe { startListeningSafe() }
+        }
     }
 
-    private fun startListening() {
-        stopListening()
-        listening = true
-
-        val tvOrig = tvOriginalView ?: return
-        val tvTran = tvTranslatedView ?: return
-
-        collectJob = scope.launch {
-            try { translator.ensure(listenLang, targetLang) } catch (_: Exception) {}
-
-            if (useVosk) {
-                val v = vosk ?: return@launch
-                val collect = launch {
-                    v.results.collectLatest { text ->
-                        tvOrig.text = text
-                        if (text.isNotBlank()) {
-                            val tr = try { translator.translate(text) } catch (_: Exception) { "" }
-                            tvTran.text = tr
-                            if (dialogMode && tr.isNotBlank()) tts.speak(tr, targetLang)
+    private fun startListeningSafe() {
+        if (isToggling) return
+        isToggling = true
+        workScope.launch {
+            try {
+                stopListeningInternal() // на всякий
+                translator.ensure(listenLang, targetLang) // фоново
+                listening = true
+                collectJob = launch {
+                    if (useVosk) {
+                        val v = vosk ?: return@launch
+                        launch {
+                            v.results.collectLatest { text ->
+                                uiScope.launch {
+                                    tvOriginalView?.text = text
+                                }
+                                if (text.isNotBlank()) {
+                                    val tr = try { translator.translate(text) } catch (_: Exception) { "" }
+                                    uiScope.launch {
+                                        tvTranslatedView?.text = tr
+                                        if (dialogMode && tr.isNotBlank()) tts.speak(tr, targetLang)
+                                    }
+                                }
+                            }
                         }
+                        v.start(listenLang)
+                    } else {
+                        launch {
+                            asrSystem.results.collectLatest { text ->
+                                uiScope.launch {
+                                    tvOriginalView?.text = text
+                                }
+                                if (text.isNotBlank()) {
+                                    val tr = try { translator.translate(text) } catch (_: Exception) { "" }
+                                    uiScope.launch {
+                                        tvTranslatedView?.text = tr
+                                        if (dialogMode && tr.isNotBlank()) tts.speak(tr, targetLang)
+                                    }
+                                }
+                            }
+                        }
+                        asrSystem.start(listenLang)
                     }
                 }
-                v.start(listenLang)
-                collect.invokeOnCompletion {}
-            } else {
-                val collect = launch {
-                    asrSystem.results.collectLatest { text ->
-                        tvOrig.text = text
-                        if (text.isNotBlank()) {
-                            val tr = try { translator.translate(text) } catch (_: Exception) { "" }
-                            tvTran.text = tr
-                            if (dialogMode && tr.isNotBlank()) tts.speak(tr, targetLang)
-                        }
-                    }
-                }
-                asrSystem.start(listenLang)
-                collect.invokeOnCompletion {}
+            } catch (_: Exception) {
+                uiScope.launch { Toast.makeText(this@LtAccessibilityService, "Ошибка старта", Toast.LENGTH_SHORT).show() }
+            } finally {
+                isToggling = false
             }
         }
     }
 
-    private fun stopListening() {
+    private fun stopListeningSafe(onStopped: (() -> Unit)? = null) {
+        if (isToggling) return
+        isToggling = true
+        workScope.launch {
+            try {
+                stopListeningInternal()
+                uiScope.launch { /* можно обновить кнопки на “Старт” */ }
+                onStopped?.let { uiScope.launch { it() } }
+            } finally {
+                isToggling = false
+            }
+        }
+    }
+
+    private suspend fun stopListeningInternal() {
         listening = false
         try { asrSystem.stop() } catch (_: Exception) {}
         try { vosk?.stop() } catch (_: Exception) {}
