@@ -104,7 +104,7 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
                 ctx.startActivity(i)
             }) { Text(if (accEnabled) "Спец. возможности: включено" else "Открыть Спец. возможности") }
 
-            // Управление A11y-оверлеем напрямую
+            // Управление A11y-оверлеем
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = {
@@ -124,7 +124,7 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
                 }) { Text("Скрыть панель (A11y)") }
             }
 
-            // FGS оставлен как опция (на Samsung может гаситься прошивкой)
+            // FGS-оверлей (на Samsung часто гасится прошивкой — опционально)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     enabled = micGranted,
@@ -147,7 +147,7 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
             }) { Text("Тест уведомления (FGS)") }
 
             Spacer(Modifier.height(12.dp))
-            Text("Для Samsung используйте кнопки A11y — панель стабильно держится без FGS.", style = MaterialTheme.typography.bodySmall)
+            Text("Используйте A11y‑панель на Samsung — она стабильнее, чем FGS.", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
