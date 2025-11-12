@@ -27,7 +27,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Foreground overlay (может гаситься One UI; оставляем как запасной вариант) -->
+        <!-- FGS-оверлей как запасной вариант -->
         <service
             android:name=".overlay.OverlayService"
             android:exported="false"
@@ -39,7 +39,7 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
-        <!-- Основной стабильный канал: Accessibility overlay -->
+        <!-- Основной стабильный канал: Accessibility overlay (без FGS) -->
         <service
             android:name=".accessibility.LtAccessibilityService"
             android:exported="true"
