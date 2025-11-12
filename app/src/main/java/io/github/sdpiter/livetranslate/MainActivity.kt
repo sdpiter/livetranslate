@@ -1,5 +1,7 @@
 package io.github.sdpiter.livetranslate
 
+import androidx.core.content.FileProvider
+import java.io.File
 import android.Manifest
 import android.app.NotificationManager
 import android.content.Intent
@@ -128,6 +130,21 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
                 val i = Intent(ctx, FgTestService::class.java)
                 ContextCompat.startForegroundService(ctx, i)
             }) { Text("Тест уведомления (FGS)") }
+
+            OutlinedButton(onClick = {
+    val f = File(ctx.filesDir, "lt.log")
+    if (!f.exists()) {
+        // создадим пустой лог, чтобы было что шарить
+        f.writeText("log empty\n")
+    }
+    val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", f)
+    val share = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    ctx.startActivity(Intent.createChooser(share, "Поделиться логом"))
+}) { Text("Поделиться логом") }
         }
     }
 }
