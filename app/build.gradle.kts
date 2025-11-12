@@ -64,11 +64,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
-    // Vosk ASR — верная координата!
-    implementation("com.alphacephei:vosk-android:0.3.45")
-    implementation("net.java.dev.jna:jna:5.13.0@aar") // <-- добавьте это
-    // Если вдруг их репозиторий отдаёт 404 на 0.3.45 — попробуй одну из:
-    // implementation("com.alphacephei:vosk-android:0.3.44")
-    // implementation("com.alphacephei:vosk-android:0.3.42")
-    // implementation("com.alphacephei:vosk-android:0.3.38")
+    // Vosk + JNA: исключаем транзитивную JNA из Vosk и добавляем jna как AAR (с .so)
+    implementation("com.alphacephei:vosk-android:0.3.45") {
+        exclude(group = "net.java.dev.jna", module = "jna")
+    }
+    implementation("net.java.dev.jna:jna:5.13.0@aar")
 }
