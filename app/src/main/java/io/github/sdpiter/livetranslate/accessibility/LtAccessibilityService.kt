@@ -1,6 +1,10 @@
 package io.github.sdpiter.livetranslate.accessibility
 
 import android.accessibilityservice.AccessibilityService
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.view.Gravity
@@ -13,12 +17,32 @@ import android.widget.Toast
 
 class LtAccessibilityService : AccessibilityService() {
 
+    companion object {
+        const val ACTION_SHOW = "io.github.sdpiter.livetranslate.accessibility.SHOW"
+        const val ACTION_HIDE = "io.github.sdpiter.livetranslate.accessibility.HIDE"
+    }
+
     private lateinit var wm: WindowManager
     private var bar: View? = null
+
+    private val controlReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                ACTION_SHOW -> showBar()
+                ACTION_HIDE -> removeBar()
+            }
+        }
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        // Регистрируем управление из приложения
+        val f = IntentFilter().apply {
+            addAction(ACTION_SHOW)
+            addAction(ACTION_HIDE)
+        }
+        registerReceiver(controlReceiver, f)
         showBar()
         Toast.makeText(this, "LiveTranslate overlay (Accessibility) включён", Toast.LENGTH_SHORT).show()
     }
@@ -78,6 +102,7 @@ class LtAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        try { unregisterReceiver(controlReceiver) } catch (_: Exception) {}
         removeBar()
         super.onDestroy()
     }
