@@ -8,6 +8,8 @@ import android.content.IntentFilter
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -19,14 +21,16 @@ import android.widget.Toast
 import io.github.sdpiter.livetranslate.asr.VoskEngine
 import io.github.sdpiter.livetranslate.mt.MlKitTranslator
 import io.github.sdpiter.livetranslate.tts.TtsEngine
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class LtAccessibilityService : AccessibilityService() {
 
@@ -36,6 +40,7 @@ class LtAccessibilityService : AccessibilityService() {
         const val ACTION_TOGGLE = "io.github.sdpiter.livetranslate.accessibility.TOGGLE"
     }
 
+    // Window
     private lateinit var wm: WindowManager
     private var panel: View? = null
 
@@ -45,35 +50,38 @@ class LtAccessibilityService : AccessibilityService() {
     private var tvTranslatedView: TextView? = null
     private var btnStartPause: Button? = null
 
-    // Scopes + глобальный обработчик ошибок (не даём службе падать)
-    private val errHandler = CoroutineExceptionHandler { _, e ->
+    // Error handler без ссылок на uiScope (чтобы не было рекурсии)
+    private val mainHandler: Handler = Handler(Looper.getMainLooper())
+    private val errHandler: CoroutineExceptionHandler = CoroutineExceptionHandler { _, e ->
         logE("CEH", e)
-        uiScope.launch {
+        mainHandler.post {
             Toast.makeText(this@LtAccessibilityService, "Ошибка: ${e.javaClass.simpleName}", Toast.LENGTH_SHORT).show()
             updateStateUi()
         }
     }
-    private val uiScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + errHandler)
-    private val workScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + errHandler)
 
-    // ASR/MT/TTS
-    private var vosk: VoskEngine? = null           // только Vosk (без System ASR)
+    // Scopes (явные типы)
+    private val uiScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + errHandler)
+    private val workScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + errHandler)
+
+    // Engines (Vosk‑only)
+    private var vosk: VoskEngine? = null
     private lateinit var translator: MlKitTranslator
     private lateinit var tts: TtsEngine
 
-    // Состояние
-    private var listenLang = "en-US"
-    private var targetLang = "ru"
-    private var dialogMode = false
-    private var listening = false
+    // State
+    private var listenLang: String = "en-US"
+    private var targetLang: String = "ru"
+    private var dialogMode: Boolean = false
+    private var listening: Boolean = false
     private var collectJob: Job? = null
 
-    // защита от гонок старт/стоп
-    private val engineMutex = Mutex()
-    private var isToggling = false
-    private var lastTapTs = 0L
+    // Защита от гонок старт/стоп
+    private val engineMutex: Mutex = Mutex()
+    private var isToggling: Boolean = false
+    private var lastTapTs: Long = 0L
 
-    private val controlReceiver = object : BroadcastReceiver() {
+    private val controlReceiver: BroadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 ACTION_SHOW   -> showPanel()
@@ -87,7 +95,6 @@ class LtAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
 
-        // регистрируем управление из приложения
         val filter = IntentFilter().apply {
             addAction(ACTION_SHOW); addAction(ACTION_HIDE); addAction(ACTION_TOGGLE)
         }
@@ -101,7 +108,6 @@ class LtAccessibilityService : AccessibilityService() {
             logE("registerReceiver", e)
         }
 
-        // движки
         vosk = VoskEngine(this)
         translator = MlKitTranslator()
         tts = TtsEngine(this)
@@ -112,15 +118,16 @@ class LtAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
     override fun onInterrupt() {}
 
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
-    private fun lpWindow() = WindowManager.LayoutParams(
-        WindowManager.LayoutParams.MATCH_PARENT,
-        WindowManager.LayoutParams.WRAP_CONTENT,
-        WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-        PixelFormat.TRANSLUCENT
-    ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = 40 }
+    private fun lpWindow(): WindowManager.LayoutParams =
+        WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = 40 }
 
     private fun row(): LinearLayout = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
 
@@ -132,7 +139,7 @@ class LtAccessibilityService : AccessibilityService() {
             }
             setOnClickListener {
                 val now = System.currentTimeMillis()
-                if (now - lastTapTs >= 350 && !isToggling) { lastTapTs = now; onClick() }
+                if (!isToggling && now - lastTapTs >= 350) { lastTapTs = now; onClick() }
             }
         }
 
@@ -216,7 +223,6 @@ class LtAccessibilityService : AccessibilityService() {
             engineMutex.withLock {
                 try {
                     stopInternal() // страховка
-                    // подгружаем переводчик в фоне (ML Kit)
                     try { translator.ensure(listenLang, targetLang) } catch (e: Exception) { logE("translator.ensure", e) }
                     listening = true
                     uiScope.launch { updateStateUi() }
@@ -266,22 +272,22 @@ class LtAccessibilityService : AccessibilityService() {
         collectJob?.cancel()
         collectJob = null
         try { vosk?.stopAndJoin() } catch (e: Exception) { logE("vosk.stopAndJoin", e) }
-        delay(120) // даём системе отпустить микрофон перед новым стартом
+        delay(120) // отпускаем микрофон
     }
 
     override fun onDestroy() {
         try { unregisterReceiver(controlReceiver) } catch (_: Exception) {}
-        // Без runBlocking: быстро отпускаем ресурсы и выходим, чтобы не спровоцировать ANR
         try { vosk?.stop() } catch (_: Exception) {}
         try { panel?.let { wm.removeView(it) } } catch (_: Exception) {}
         if (this::tts.isInitialized) tts.shutdown()
         super.onDestroy()
     }
 
-    // простое логирование в файл, чтобы понимать причину (app/files/lt.log)
+    // лог в app/files/lt.log
     private fun logE(tag: String, e: Throwable) {
         try {
-            val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
+            val ts = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.US)
+                .format(java.util.Date())
             val line = "$ts [$tag] ${e.javaClass.simpleName}: ${e.message}\n"
             File(filesDir, "lt.log").appendText(line)
         } catch (_: Exception) {}
