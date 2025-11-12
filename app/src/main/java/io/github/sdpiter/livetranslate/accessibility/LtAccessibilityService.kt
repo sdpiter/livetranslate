@@ -17,6 +17,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import io.github.sdpiter.livetranslate.asr.SpeechRecognizerEngine
+import io.github.sdpiter.livetranslate.asr.VoskEngine
 import io.github.sdpiter.livetranslate.mt.MlKitTranslator
 import io.github.sdpiter.livetranslate.tts.TtsEngine
 import kotlinx.coroutines.*
@@ -33,18 +34,21 @@ class LtAccessibilityService : AccessibilityService() {
     private lateinit var wm: WindowManager
     private var panel: View? = null
 
-    // UI refs (инициализируются в showPanel)
+    // UI refs
     private var dirView: TextView? = null
     private var tvOriginalView: TextView? = null
     private var tvTranslatedView: TextView? = null
+    private var btnAsrView: Button? = null
 
     // Core
     private val scope = CoroutineScope(Dispatchers.Main.immediate)
-    private lateinit var asr: SpeechRecognizerEngine
+    private lateinit var asrSystem: SpeechRecognizerEngine
     private lateinit var translator: MlKitTranslator
     private lateinit var tts: TtsEngine
+    private var vosk: VoskEngine? = null
 
-    // Языки и режим
+    private var useVosk = true  // по умолчанию Vosk (без пиликанья)
+
     private var listenLang = "en-US"
     private var targetLang = "ru"
     private var dialogMode = false
@@ -65,7 +69,6 @@ class LtAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
 
-        // Регистрация приёмника (Android 14+ требует флаг)
         val filter = IntentFilter().apply {
             addAction(ACTION_SHOW); addAction(ACTION_HIDE); addAction(ACTION_TOGGLE)
         }
@@ -79,10 +82,10 @@ class LtAccessibilityService : AccessibilityService() {
             Toast.makeText(this, "Receiver error: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
         }
 
-        // Движки
-        asr = SpeechRecognizerEngine(this)
+        asrSystem = SpeechRecognizerEngine(this)
         translator = MlKitTranslator()
         tts = TtsEngine(this)
+        vosk = VoskEngine(this)
 
         Toast.makeText(this, "LiveTranslate (Accessibility) готово", Toast.LENGTH_SHORT).show()
     }
@@ -111,13 +114,11 @@ class LtAccessibilityService : AccessibilityService() {
             setPadding(dp(12), dp(10), dp(12), dp(12))
         }
 
-        // Строка направления
         dirView = TextView(this).apply {
             setTextColor(0xFFB0BEC5.toInt()); textSize = 14f
             text = "Направление: EN → RU"
         }
 
-        // Заголовок
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             val title = TextView(this@LtAccessibilityService).apply {
@@ -130,17 +131,9 @@ class LtAccessibilityService : AccessibilityService() {
             addView(title); addView(btnClose)
         }
 
-        // Текстовые поля
-        tvOriginalView = TextView(this).apply {
-            setTextColor(0xFFB0BEC5.toInt()); textSize = 14f
-            text = ""
-        }
-        tvTranslatedView = TextView(this).apply {
-            setTextColor(Color.WHITE); textSize = 16f
-            text = ""
-        }
+        tvOriginalView = TextView(this).apply { setTextColor(0xFFB0BEC5.toInt()); textSize = 14f }
+        tvTranslatedView = TextView(this).apply { setTextColor(Color.WHITE); textSize = 16f }
 
-        // Кнопки управления
         val controls = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
 
@@ -160,12 +153,23 @@ class LtAccessibilityService : AccessibilityService() {
                 text = "Swap EN↔RU"
                 setOnClickListener { swapLanguages(restart = true) }
             }
+            btnAsrView = Button(this@LtAccessibilityService).apply {
+                text = if (useVosk) "ASR: Vosk" else "ASR: System"
+                setOnClickListener {
+                    useVosk = !useVosk
+                    text = if (useVosk) "ASR: Vosk" else "ASR: System"
+                    if (listening) {
+                        stopListening()
+                        startListening()
+                    }
+                }
+            }
             val btnClear = Button(this@LtAccessibilityService).apply {
                 text = "Очистить"
                 setOnClickListener { tvOriginalView?.text = ""; tvTranslatedView?.text = "" }
             }
 
-            addView(btnSubs); addView(btnDialog); addView(btnToggle); addView(btnSwap); addView(btnClear)
+            addView(btnSubs); addView(btnDialog); addView(btnToggle); addView(btnSwap); addView(btnAsrView); addView(btnClear)
         }
 
         root.addView(header)
@@ -193,10 +197,7 @@ class LtAccessibilityService : AccessibilityService() {
         listenLang = if (wasRu) "en-US" else "ru-RU"
         targetLang = if (wasRu) "ru" else "en"
         dirView?.text = "Направление: ${if (listenLang.startsWith("ru")) "RU" else "EN"} → ${targetLang.uppercase()}"
-        if (restart && listening) {
-            stopListening()
-            startListening()
-        }
+        if (restart && listening) { stopListening(); startListening() }
     }
 
     private fun startListening() {
@@ -207,27 +208,43 @@ class LtAccessibilityService : AccessibilityService() {
         val tvTran = tvTranslatedView ?: return
 
         collectJob = scope.launch {
-            // Подготовить переводчик (скачает пакет при необходимости)
             try { translator.ensure(listenLang, targetLang) } catch (_: Exception) {}
 
-            // Поток ASR → перевод → (опц.) озвучка
-            launch {
-                asr.results.collectLatest { text ->
-                    tvOrig.text = text
-                    if (text.isNotBlank()) {
-                        val tr = try { translator.translate(text) } catch (_: Exception) { "" }
-                        tvTran.text = tr
-                        if (dialogMode && tr.isNotBlank()) tts.speak(tr, targetLang)
+            if (useVosk) {
+                val v = vosk ?: return@launch
+                val collect = launch {
+                    v.results.collectLatest { text ->
+                        tvOrig.text = text
+                        if (text.isNotBlank()) {
+                            val tr = try { translator.translate(text) } catch (_: Exception) { "" }
+                            tvTran.text = tr
+                            if (dialogMode && tr.isNotBlank()) tts.speak(tr, targetLang)
+                        }
                     }
                 }
+                v.start(listenLang)
+                collect.invokeOnCompletion {}
+            } else {
+                val collect = launch {
+                    asrSystem.results.collectLatest { text ->
+                        tvOrig.text = text
+                        if (text.isNotBlank()) {
+                            val tr = try { translator.translate(text) } catch (_: Exception) { "" }
+                            tvTran.text = tr
+                            if (dialogMode && tr.isNotBlank()) tts.speak(tr, targetLang)
+                        }
+                    }
+                }
+                asrSystem.start(listenLang)
+                collect.invokeOnCompletion {}
             }
-            asr.start(listenLang)
         }
     }
 
     private fun stopListening() {
         listening = false
-        try { asr.stop() } catch (_: Exception) {}
+        try { asrSystem.stop() } catch (_: Exception) {}
+        try { vosk?.stop() } catch (_: Exception) {}
         collectJob?.cancel()
         collectJob = null
     }
@@ -236,7 +253,6 @@ class LtAccessibilityService : AccessibilityService() {
         try { unregisterReceiver(controlReceiver) } catch (_: Exception) {}
         hidePanel()
         if (this::tts.isInitialized) tts.shutdown()
-        scope.cancel()
         super.onDestroy()
     }
 }
