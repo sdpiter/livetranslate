@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.os.Build
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -20,6 +21,7 @@ class LtAccessibilityService : AccessibilityService() {
     companion object {
         const val ACTION_SHOW = "io.github.sdpiter.livetranslate.accessibility.SHOW"
         const val ACTION_HIDE = "io.github.sdpiter.livetranslate.accessibility.HIDE"
+        const val ACTION_TOGGLE = "io.github.sdpiter.livetranslate.accessibility.TOGGLE"
     }
 
     private lateinit var wm: WindowManager
@@ -30,6 +32,7 @@ class LtAccessibilityService : AccessibilityService() {
             when (intent?.action) {
                 ACTION_SHOW -> showBar()
                 ACTION_HIDE -> removeBar()
+                ACTION_TOGGLE -> if (bar == null) showBar() else removeBar()
             }
         }
     }
@@ -37,12 +40,24 @@ class LtAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        // Регистрируем управление из приложения
-        val f = IntentFilter().apply {
+
+        // Регистрация приёмника c флагами для Android 14+
+        val filter = IntentFilter().apply {
             addAction(ACTION_SHOW)
             addAction(ACTION_HIDE)
+            addAction(ACTION_TOGGLE)
         }
-        registerReceiver(controlReceiver, f)
+        try {
+            if (Build.VERSION.SDK_INT >= 34) {
+                registerReceiver(controlReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION")
+                registerReceiver(controlReceiver, filter)
+            }
+        } catch (e: Exception) {
+            Toast.makeText(this, "Ошибка регистрации receiver: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+        }
+
         showBar()
         Toast.makeText(this, "LiveTranslate overlay (Accessibility) включён", Toast.LENGTH_SHORT).show()
     }
