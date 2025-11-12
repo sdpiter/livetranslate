@@ -19,23 +19,24 @@ import android.widget.Toast
 import io.github.sdpiter.livetranslate.asr.SpeechRecognizerEngine
 import io.github.sdpiter.livetranslate.mt.MlKitTranslator
 import io.github.sdpiter.livetranslate.tts.TtsEngine
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
 
 class LtAccessibilityService : AccessibilityService() {
 
     companion object {
-        const val ACTION_SHOW = "io.github.sdpiter.livetranslate.accessibility.SHOW"
-        const val ACTION_HIDE = "io.github.sdpiter.livetranslate.accessibility.HIDE"
+        const val ACTION_SHOW   = "io.github.sdpiter.livetranslate.accessibility.SHOW"
+        const val ACTION_HIDE   = "io.github.sdpiter.livetranslate.accessibility.HIDE"
         const val ACTION_TOGGLE = "io.github.sdpiter.livetranslate.accessibility.TOGGLE"
     }
 
     private lateinit var wm: WindowManager
     private var panel: View? = null
+
+    // UI refs (инициализируются в showPanel)
+    private var dirView: TextView? = null
+    private var tvOriginalView: TextView? = null
+    private var tvTranslatedView: TextView? = null
 
     // Core
     private val scope = CoroutineScope(Dispatchers.Main.immediate)
@@ -43,6 +44,7 @@ class LtAccessibilityService : AccessibilityService() {
     private lateinit var translator: MlKitTranslator
     private lateinit var tts: TtsEngine
 
+    // Языки и режим
     private var listenLang = "en-US"
     private var targetLang = "ru"
     private var dialogMode = false
@@ -63,23 +65,21 @@ class LtAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
 
+        // Регистрация приёмника (Android 14+ требует флаг)
         val filter = IntentFilter().apply {
-            addAction(ACTION_SHOW)
-            addAction(ACTION_HIDE)
-            addAction(ACTION_TOGGLE)
+            addAction(ACTION_SHOW); addAction(ACTION_HIDE); addAction(ACTION_TOGGLE)
         }
         try {
             if (Build.VERSION.SDK_INT >= 34) {
                 registerReceiver(controlReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
             } else {
-                @Suppress("DEPRECATION")
-                registerReceiver(controlReceiver, filter)
+                @Suppress("DEPRECATION") registerReceiver(controlReceiver, filter)
             }
         } catch (e: Exception) {
             Toast.makeText(this, "Receiver error: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
         }
 
-        // Инициализация движков
+        // Движки
         asr = SpeechRecognizerEngine(this)
         translator = MlKitTranslator()
         tts = TtsEngine(this)
@@ -92,19 +92,15 @@ class LtAccessibilityService : AccessibilityService() {
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
-    private fun params(): WindowManager.LayoutParams {
-        return WindowManager.LayoutParams(
+    private fun params(): WindowManager.LayoutParams =
+        WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            y = 40
-        }
-    }
+        ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = 40 }
 
     private fun showPanel() {
         if (panel != null) return
@@ -115,69 +111,67 @@ class LtAccessibilityService : AccessibilityService() {
             setPadding(dp(12), dp(10), dp(12), dp(12))
         }
 
-        // Направление (создаём до header, чтобы ссылаться в onClick)
-        val dir = TextView(this).apply {
+        // Строка направления
+        dirView = TextView(this).apply {
             setTextColor(0xFFB0BEC5.toInt()); textSize = 14f
             text = "Направление: EN → RU"
         }
 
+        // Заголовок
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             val title = TextView(this@LtAccessibilityService).apply {
                 setTextColor(Color.WHITE); textSize = 16f; text = "LiveTranslate (Accessibility)"
             }
-            val btnSwap = TextView(this@LtAccessibilityService).apply {
-                setTextColor(Color.WHITE); textSize = 16f; text = "  Swap"
-                setOnClickListener {
-                    val wasRu = listenLang.startsWith("ru", true)
-                    listenLang = if (wasRu) "en-US" else "ru-RU"
-                    targetLang = if (wasRu) "ru" else "en"
-                    dir.text = "Направление: ${if (listenLang.startsWith("ru")) "RU" else "EN"} → ${targetLang.uppercase()}"
-                }
-            }
             val btnClose = TextView(this@LtAccessibilityService).apply {
                 setTextColor(Color.WHITE); textSize = 18f; text = "   ✕"
                 setOnClickListener { hidePanel() }
             }
-            addView(title); addView(btnSwap); addView(btnClose)
+            addView(title); addView(btnClose)
         }
 
-        val tvOriginal = TextView(this).apply {
+        // Текстовые поля
+        tvOriginalView = TextView(this).apply {
             setTextColor(0xFFB0BEC5.toInt()); textSize = 14f
             text = ""
         }
-        val tvTranslated = TextView(this).apply {
+        tvTranslatedView = TextView(this).apply {
             setTextColor(Color.WHITE); textSize = 16f
             text = ""
         }
 
+        // Кнопки управления
         val controls = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
+
             val btnSubs = Button(this@LtAccessibilityService).apply {
                 text = "Субтитры"
-                setOnClickListener { dialogMode = false; startListening(tvOriginal, tvTranslated) }
+                setOnClickListener { dialogMode = false; startListening() }
             }
             val btnDialog = Button(this@LtAccessibilityService).apply {
                 text = "Диалог"
-                setOnClickListener { dialogMode = true; startListening(tvOriginal, tvTranslated) }
+                setOnClickListener { dialogMode = true; startListening() }
             }
             val btnToggle = Button(this@LtAccessibilityService).apply {
                 text = "Пауза/Старт"
-                setOnClickListener {
-                    if (listening) stopListening() else startListening(tvOriginal, tvTranslated)
-                }
+                setOnClickListener { if (listening) stopListening() else startListening() }
+            }
+            val btnSwap = Button(this@LtAccessibilityService).apply {
+                text = "Swap EN↔RU"
+                setOnClickListener { swapLanguages(restart = true) }
             }
             val btnClear = Button(this@LtAccessibilityService).apply {
                 text = "Очистить"
-                setOnClickListener { tvOriginal.text = ""; tvTranslated.text = "" }
+                setOnClickListener { tvOriginalView?.text = ""; tvTranslatedView?.text = "" }
             }
-            addView(btnSubs); addView(btnDialog); addView(btnToggle); addView(btnClear)
+
+            addView(btnSubs); addView(btnDialog); addView(btnToggle); addView(btnSwap); addView(btnClear)
         }
 
         root.addView(header)
-        root.addView(dir)
-        root.addView(tvOriginal)
-        root.addView(tvTranslated)
+        root.addView(dirView)
+        root.addView(tvOriginalView)
+        root.addView(tvTranslatedView)
         root.addView(controls)
 
         try {
@@ -194,21 +188,35 @@ class LtAccessibilityService : AccessibilityService() {
         stopListening()
     }
 
-    private fun startListening(tvOriginal: TextView, tvTranslated: TextView) {
+    private fun swapLanguages(restart: Boolean) {
+        val wasRu = listenLang.startsWith("ru", true)
+        listenLang = if (wasRu) "en-US" else "ru-RU"
+        targetLang = if (wasRu) "ru" else "en"
+        dirView?.text = "Направление: ${if (listenLang.startsWith("ru")) "RU" else "EN"} → ${targetLang.uppercase()}"
+        if (restart && listening) {
+            stopListening()
+            startListening()
+        }
+    }
+
+    private fun startListening() {
         stopListening()
         listening = true
 
+        val tvOrig = tvOriginalView ?: return
+        val tvTran = tvTranslatedView ?: return
+
         collectJob = scope.launch {
-            // Подготовим переводчик (скачает пакет при необходимости)
+            // Подготовить переводчик (скачает пакет при необходимости)
             try { translator.ensure(listenLang, targetLang) } catch (_: Exception) {}
 
-            // Собираем текст из ASR
+            // Поток ASR → перевод → (опц.) озвучка
             launch {
                 asr.results.collectLatest { text ->
-                    tvOriginal.text = text
+                    tvOrig.text = text
                     if (text.isNotBlank()) {
                         val tr = try { translator.translate(text) } catch (_: Exception) { "" }
-                        tvTranslated.text = tr
+                        tvTran.text = tr
                         if (dialogMode && tr.isNotBlank()) tts.speak(tr, targetLang)
                     }
                 }
