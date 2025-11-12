@@ -23,6 +23,8 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.*
 
 class LtAccessibilityService : AccessibilityService() {
 
@@ -35,38 +37,29 @@ class LtAccessibilityService : AccessibilityService() {
     private lateinit var wm: WindowManager
     private var panel: View? = null
 
-    // UI refs
     private var dirView: TextView? = null
     private var tvOriginalView: TextView? = null
     private var tvTranslatedView: TextView? = null
     private var btnStartPause: Button? = null
 
-    // handlers / scopes
     private val mainHandler = Handler(Looper.getMainLooper())
     private val errHandler = CoroutineExceptionHandler { _, e ->
-        logE("CEH", e)
-        mainHandler.post {
-            Toast.makeText(this@LtAccessibilityService, "Ошибка: ${e.javaClass.simpleName}", Toast.LENGTH_SHORT).show()
-            updateStateUi()
-        }
+        logE("CEH", e); mainHandler.post { Toast.makeText(this, "Ошибка: ${e.javaClass.simpleName}", Toast.LENGTH_SHORT).show() }
     }
     private val uiScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + errHandler)
     private val workScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + errHandler)
 
-    // Engines (Vosk‑only)
     private var vosk: VoskEngine? = null
     private lateinit var translator: MlKitTranslator
     private lateinit var tts: TtsEngine
 
-    // State
     private var listenLang: String = "en-US"
     private var targetLang: String = "ru"
     private var dialogMode: Boolean = false
     private var listening: Boolean = false
     private var collectJob: Job? = null
 
-    // защита от гонок
-    private val engineMutex: Mutex = Mutex()
+    private val engineMutex = Mutex()
     private var isToggling: Boolean = false
     private var lastTapTs: Long = 0L
 
@@ -88,44 +81,44 @@ class LtAccessibilityService : AccessibilityService() {
             addAction(ACTION_SHOW); addAction(ACTION_HIDE); addAction(ACTION_TOGGLE)
         }
         try {
-            if (Build.VERSION.SDK_INT >= 34) {
-                registerReceiver(controlReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-            } else {
-                @Suppress("DEPRECATION") registerReceiver(controlReceiver, filter)
-            }
+            if (Build.VERSION.SDK_INT >= 34) registerReceiver(controlReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            else @Suppress("DEPRECATION") registerReceiver(controlReceiver, filter)
         } catch (e: Exception) { logE("registerReceiver", e) }
 
-        vosk = VoskEngine(this)
+        vosk = VoskEngine(
+            this,
+            onError = { logE("vosk", it); uiScope.launch { Toast.makeText(this@LtAccessibilityService, "ASR ошибка: ${it.javaClass.simpleName}", Toast.LENGTH_SHORT).show() } },
+            onInfo = { logI(it) }
+        )
         translator = MlKitTranslator()
         tts = TtsEngine(this)
-        // убрал тост «готово», чтобы не всплывал при перезапуске службы
+        logI("service.connected")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
     override fun onInterrupt() {}
 
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
-    private fun lpWindow(): WindowManager.LayoutParams =
-        WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
-        ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = 40 }
+    private fun lpWindow() = WindowManager.LayoutParams(
+        WindowManager.LayoutParams.MATCH_PARENT,
+        WindowManager.LayoutParams.WRAP_CONTENT,
+        WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+        PixelFormat.TRANSLUCENT
+    ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = 40 }
 
     private fun row(): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        weightSum = 3f
+        orientation = LinearLayout.HORIZONTAL; weightSum = 3f
     }
 
     private fun btn(label: String, onClick: () -> Unit): Button =
         Button(this).apply {
             text = label
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
                 val m = dp(6); setMargins(m, m, m, m)
             }
+            isAllCaps = false
             setOnClickListener {
                 val now = System.currentTimeMillis()
                 if (!isToggling && now - lastTapTs >= 350) { lastTapTs = now; onClick() }
@@ -141,7 +134,6 @@ class LtAccessibilityService : AccessibilityService() {
             setPadding(dp(12), dp(10), dp(12), dp(12))
         }
 
-        // header
         val header = row().apply {
             val title = TextView(this@LtAccessibilityService).apply {
                 setTextColor(Color.WHITE); textSize = 16f; text = "LiveTranslate (Accessibility)"
@@ -163,16 +155,16 @@ class LtAccessibilityService : AccessibilityService() {
         val row1 = row().apply {
             addView(btn("СУБТИТРЫ") { dialogMode = false; startSafe() })
             addView(btn("ДИАЛОГ") { dialogMode = true; startSafe() })
-            btnStartPause = btn(if (listening) "ПАУЗА" else "СТАРТ") {
+            btnStartPause = btn(if (listening) "Пауза" else "Старт") {
                 if (listening) stopSafe() else startSafe()
             }
             addView(btnStartPause)
         }
 
         val row2 = row().apply {
-            addView(btn("SWAP EN ↔ RU") { swap(restart = listening) })
-            addView(btn("ОЧИСТИТЬ") { tvOriginalView?.text = ""; tvTranslatedView?.text = "" })
-            addView(btn("СКРЫТЬ") { hidePanel() })
+            addView(btn("Swap EN↔RU") { swap(restart = listening) })
+            addView(btn("Очистить") { tvOriginalView?.text = ""; tvTranslatedView?.text = "" })
+            addView(btn("Скрыть") { hidePanel() })
         }
 
         root.addView(header)
@@ -203,7 +195,7 @@ class LtAccessibilityService : AccessibilityService() {
     }
 
     private fun updateStateUi() {
-        btnStartPause?.text = if (listening) "ПАУЗА" else "СТАРТ"
+        btnStartPause?.text = if (listening) "Пауза" else "Старт"
     }
 
     private fun startSafe() {
@@ -212,7 +204,8 @@ class LtAccessibilityService : AccessibilityService() {
         workScope.launch {
             engineMutex.withLock {
                 try {
-                    stopInternal() // страховка
+                    logI("startSafe.begin")
+                    stopInternal()
                     try { translator.ensure(listenLang, targetLang) } catch (e: Exception) { logE("translator.ensure", e) }
                     listening = true
                     uiScope.launch { updateStateUi() }
@@ -233,6 +226,7 @@ class LtAccessibilityService : AccessibilityService() {
                         }
                         v.start(listenLang)
                     }
+                    logI("startSafe.ok")
                 } catch (e: Exception) {
                     logE("startSafe", e)
                     uiScope.launch { Toast.makeText(this@LtAccessibilityService, "Ошибка старта: ${e.javaClass.simpleName}", Toast.LENGTH_SHORT).show() }
@@ -247,8 +241,10 @@ class LtAccessibilityService : AccessibilityService() {
         workScope.launch {
             engineMutex.withLock {
                 try {
+                    logI("stopSafe.begin")
                     stopInternal()
                     uiScope.launch { updateStateUi(); onStopped?.invoke() }
+                    logI("stopSafe.ok")
                 } catch (e: Exception) { logE("stopSafe", e) }
                 finally { isToggling = false }
             }
@@ -258,10 +254,9 @@ class LtAccessibilityService : AccessibilityService() {
     private suspend fun stopInternal() {
         if (!listening && collectJob == null) return
         listening = false
-        collectJob?.cancel()
-        collectJob = null
+        collectJob?.cancel(); collectJob = null
         try { vosk?.stopAndJoin() } catch (e: Exception) { logE("vosk.stopAndJoin", e) }
-        delay(120) // отпускаем микрофон
+        delay(120)
     }
 
     override fun onDestroy() {
@@ -272,13 +267,17 @@ class LtAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    // лог в app/files/lt.log
+    // логирование
     private fun logE(tag: String, e: Throwable) {
         try {
-            val ts = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.US)
-                .format(java.util.Date())
-            val line = "$ts [$tag] ${e.javaClass.simpleName}: ${e.message}\n"
-            File(filesDir, "lt.log").appendText(line)
+            val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
+            File(filesDir, "lt.log").appendText("$ts [ERR][$tag] ${e.javaClass.simpleName}: ${e.message}\n")
+        } catch (_: Exception) {}
+    }
+    private fun logI(msg: String) {
+        try {
+            val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
+            File(filesDir, "lt.log").appendText("$ts [INF] $msg\n")
         } catch (_: Exception) {}
     }
 }
