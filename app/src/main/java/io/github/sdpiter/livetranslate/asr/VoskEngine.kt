@@ -11,7 +11,6 @@ import org.vosk.Model
 import org.vosk.Recognizer
 import java.io.File
 import java.io.FileOutputStream
-import java.io.InputStream
 import java.net.URL
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
@@ -36,11 +35,11 @@ class VoskEngine(private val context: Context) {
         ).coerceAtLeast(4096)
     }
 
-    fun start(langTag: String) {
+    fun start(languageTag: String) {
         stop()
         job = scope.launch {
-            val lang = if (langTag.lowercase().startsWith("ru")) "ru" else "en"
-            val modelDir = ensureModel(lang) // загрузит/распакует при необходимости
+            val lang = if (languageTag.lowercase().startsWith("ru")) "ru" else "en"
+            val modelDir = ensureModel(lang) // скачает/распакует при необходимости
             model = Model(modelDir.absolutePath)
             recognizer = Recognizer(model, sampleRate.toFloat())
 
@@ -60,11 +59,12 @@ class VoskEngine(private val context: Context) {
                 if (n > 0) {
                     val isFinal = recognizer?.acceptWaveForm(buffer, n) == true
                     if (isFinal) {
-                        val json = recognizer?.result().orEmpty()
+                        // В 0.3.45 result — это свойство (String), а не метод
+                        val json = recognizer?.result ?: ""
                         val text = parseText(json, "text")
                         if (text.isNotBlank()) emit(text)
                     } else {
-                        val json = recognizer?.partialResult().orEmpty()
+                        val json = recognizer?.partialResult ?: ""
                         val text = parseText(json, "partial")
                         if (text.isNotBlank()) emit(text)
                     }
@@ -92,6 +92,7 @@ class VoskEngine(private val context: Context) {
     private fun parseText(json: String, key: String): String =
         try { JSONObject(json).optString(key).orEmpty() } catch (_: Exception) { "" }
 
+    // Скачивание и распаковка модели (~50–80 МБ)
     private suspend fun ensureModel(lang: String): File = withContext(Dispatchers.IO) {
         val modelsDir = File(context.filesDir, "models/vosk/$lang")
         val readyFlag = File(modelsDir, ".ready")
@@ -105,7 +106,6 @@ class VoskEngine(private val context: Context) {
             else -> "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip" to "vosk-model-small-en-us-0.15"
         }
 
-        // Скачиваем zip
         val tmpZip = File(modelsDir, "model.zip")
         if (!tmpZip.exists()) {
             URL(url).openStream().use { input ->
@@ -113,11 +113,10 @@ class VoskEngine(private val context: Context) {
             }
         }
 
-        // Распаковываем в models/vosk/<lang>/
         unzip(tmpZip, modelsDir)
         tmpZip.delete()
 
-        // В некоторых архивах внутри есть верхняя папка — перенесём содержимое наверх
+        // Перенос содержимого из верхней папки, если она есть
         val nested = File(modelsDir, topFolder)
         if (nested.exists() && nested.isDirectory) {
             nested.listFiles()?.forEach { f ->
