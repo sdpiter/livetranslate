@@ -31,16 +31,14 @@ android {
         compose = true
         buildConfig = true
     }
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.14"
-    }
+    composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    packaging {
-        resources.excludes += setOf("META-INF/**")
-    }
+    packaging { resources.excludes += setOf("META-INF/**") }
+
+    // Если у вас есть productFlavors (acc/noacc) — оставьте их, менять не нужно.
 }
 
 dependencies {
@@ -57,7 +55,6 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.2")
 
-    // Material (темы)
     implementation("com.google.android.material:material:1.12.0")
 
     // ML Kit Translate (on-device)
@@ -67,6 +64,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
-    // Vosk ASR (онлайн-зав. нет, всё офлайн)
-    implementation("org.vosk:android:0.3.45")
+    // Vosk ASR (правильный артефакт!)
+    implementation("org.vosk:vosk-android:0.3.45")
+    // Если вдруг 0.3.45 недоступна в их репо — попробуйте 0.3.44:
+    // implementation("org.vosk:vosk-android:0.3.44")
 }
