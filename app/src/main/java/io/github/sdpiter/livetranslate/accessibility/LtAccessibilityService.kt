@@ -1,10 +1,7 @@
 package io.github.sdpiter.livetranslate.accessibility
 
 import android.accessibilityservice.AccessibilityService
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
+import android.content.*
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.os.Build
@@ -21,17 +18,11 @@ import android.widget.Toast
 import io.github.sdpiter.livetranslate.asr.VoskEngine
 import io.github.sdpiter.livetranslate.mt.MlKitTranslator
 import io.github.sdpiter.livetranslate.tts.TtsEngine
-import kotlinx.coroutines.CoroutineExceptionHandler
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.io.File   // <-- добавлен импорт
+import java.io.File
 
 class LtAccessibilityService : AccessibilityService() {
 
@@ -41,7 +32,6 @@ class LtAccessibilityService : AccessibilityService() {
         const val ACTION_TOGGLE = "io.github.sdpiter.livetranslate.accessibility.TOGGLE"
     }
 
-    // Window
     private lateinit var wm: WindowManager
     private var panel: View? = null
 
@@ -51,17 +41,15 @@ class LtAccessibilityService : AccessibilityService() {
     private var tvTranslatedView: TextView? = null
     private var btnStartPause: Button? = null
 
-    // Error handler без ссылок на uiScope (во избежание рекурсии типов)
-    private val mainHandler: Handler = Handler(Looper.getMainLooper())
-    private val errHandler: CoroutineExceptionHandler = CoroutineExceptionHandler { _, e ->
+    // handlers / scopes
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val errHandler = CoroutineExceptionHandler { _, e ->
         logE("CEH", e)
         mainHandler.post {
             Toast.makeText(this@LtAccessibilityService, "Ошибка: ${e.javaClass.simpleName}", Toast.LENGTH_SHORT).show()
             updateStateUi()
         }
     }
-
-    // Scopes
     private val uiScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + errHandler)
     private val workScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + errHandler)
 
@@ -77,7 +65,7 @@ class LtAccessibilityService : AccessibilityService() {
     private var listening: Boolean = false
     private var collectJob: Job? = null
 
-    // Защита от гонок старт/стоп
+    // защита от гонок
     private val engineMutex: Mutex = Mutex()
     private var isToggling: Boolean = false
     private var lastTapTs: Long = 0L
@@ -105,15 +93,12 @@ class LtAccessibilityService : AccessibilityService() {
             } else {
                 @Suppress("DEPRECATION") registerReceiver(controlReceiver, filter)
             }
-        } catch (e: Exception) {
-            logE("registerReceiver", e)
-        }
+        } catch (e: Exception) { logE("registerReceiver", e) }
 
         vosk = VoskEngine(this)
         translator = MlKitTranslator()
         tts = TtsEngine(this)
-
-        Toast.makeText(this, "LiveTranslate (A11y) готово", Toast.LENGTH_SHORT).show()
+        // убрал тост «готово», чтобы не всплывал при перезапуске службы
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
@@ -130,7 +115,10 @@ class LtAccessibilityService : AccessibilityService() {
             PixelFormat.TRANSLUCENT
         ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = 40 }
 
-    private fun row(): LinearLayout = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+    private fun row(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        weightSum = 3f
+    }
 
     private fun btn(label: String, onClick: () -> Unit): Button =
         Button(this).apply {
@@ -153,6 +141,7 @@ class LtAccessibilityService : AccessibilityService() {
             setPadding(dp(12), dp(10), dp(12), dp(12))
         }
 
+        // header
         val header = row().apply {
             val title = TextView(this@LtAccessibilityService).apply {
                 setTextColor(Color.WHITE); textSize = 16f; text = "LiveTranslate (Accessibility)"
@@ -161,8 +150,8 @@ class LtAccessibilityService : AccessibilityService() {
                 setTextColor(Color.WHITE); textSize = 18f; text = "   ✕"
                 setOnClickListener { hidePanel() }
             }
-            addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            addView(close)
+            addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f))
+            addView(close, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         }
 
         dirView = TextView(this).apply {
@@ -260,9 +249,8 @@ class LtAccessibilityService : AccessibilityService() {
                 try {
                     stopInternal()
                     uiScope.launch { updateStateUi(); onStopped?.invoke() }
-                } catch (e: Exception) {
-                    logE("stopSafe", e)
-                } finally { isToggling = false }
+                } catch (e: Exception) { logE("stopSafe", e) }
+                finally { isToggling = false }
             }
         }
     }
