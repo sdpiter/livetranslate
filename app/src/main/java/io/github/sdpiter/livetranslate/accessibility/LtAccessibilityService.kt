@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.io.File   // <-- добавлен импорт
 
 class LtAccessibilityService : AccessibilityService() {
 
@@ -50,7 +51,7 @@ class LtAccessibilityService : AccessibilityService() {
     private var tvTranslatedView: TextView? = null
     private var btnStartPause: Button? = null
 
-    // Error handler без ссылок на uiScope (чтобы не было рекурсии)
+    // Error handler без ссылок на uiScope (во избежание рекурсии типов)
     private val mainHandler: Handler = Handler(Looper.getMainLooper())
     private val errHandler: CoroutineExceptionHandler = CoroutineExceptionHandler { _, e ->
         logE("CEH", e)
@@ -60,7 +61,7 @@ class LtAccessibilityService : AccessibilityService() {
         }
     }
 
-    // Scopes (явные типы)
+    // Scopes
     private val uiScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + errHandler)
     private val workScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + errHandler)
 
