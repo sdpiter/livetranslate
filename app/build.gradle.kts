@@ -66,6 +66,7 @@ dependencies {
 
     // Vosk ASR — верная координата!
     implementation("com.alphacephei:vosk-android:0.3.45")
+    implementation("net.java.dev.jna:jna:5.13.0@aar") // <-- добавьте это
     // Если вдруг их репозиторий отдаёт 404 на 0.3.45 — попробуй одну из:
     // implementation("com.alphacephei:vosk-android:0.3.44")
     // implementation("com.alphacephei:vosk-android:0.3.42")
