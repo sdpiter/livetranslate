@@ -12,6 +12,8 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven("https://alphacephei.com/maven")
+        // при желании можно добавить JitPack как запасной
+        // maven("https://jitpack.io")
     }
 }
 rootProject.name = "LiveTranslate"
