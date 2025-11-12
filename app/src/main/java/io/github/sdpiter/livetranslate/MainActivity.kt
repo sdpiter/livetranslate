@@ -22,6 +22,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import io.github.sdpiter.livetranslate.accessibility.LtAccessibilityService
 import io.github.sdpiter.livetranslate.debug.FgTestService
 import io.github.sdpiter.livetranslate.overlay.OverlayService
 
@@ -47,7 +48,10 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
         return if (Build.VERSION.SDK_INT >= 24) nm.areNotificationsEnabled() else true
     }
     fun isAccEnabled(): Boolean {
-        val enabled = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+        val enabled = Settings.Secure.getString(
+            ctx.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        )
         val svc = "${ctx.packageName}/io.github.sdpiter.livetranslate.accessibility.LtAccessibilityService"
         return enabled?.split(':')?.contains(svc) == true
     }
@@ -74,10 +78,15 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
     }
 
     Surface(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(
+            Modifier.fillMaxSize().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             Text("LiveTranslate α", style = MaterialTheme.typography.headlineSmall)
-            Text("Статус: Микрофон=$micGranted • Overlay=$overlayGranted • Уведомл.=$notificationsGranted • Доступность=$accEnabled",
-                style = MaterialTheme.typography.bodySmall)
+            Text(
+                "Статус: Микрофон=$micGranted • Overlay=$overlayGranted • Уведомл.=$notificationsGranted • Доступность=$accEnabled",
+                style = MaterialTheme.typography.bodySmall
+            )
 
             Button(onClick = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }) {
                 Text(if (micGranted) "Микрофон: разрешён" else "Разрешить микрофон")
@@ -95,7 +104,27 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
                 ctx.startActivity(i)
             }) { Text(if (accEnabled) "Спец. возможности: включено" else "Открыть Спец. возможности") }
 
-            // FGS-путь оставлен как вспомогательный
+            // Управление A11y-оверлеем напрямую
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        if (!accEnabled) {
+                            val i = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                            ctx.startActivity(i)
+                        } else {
+                            val i = Intent(LtAccessibilityService.ACTION_SHOW).setPackage(ctx.packageName)
+                            ctx.sendBroadcast(i)
+                        }
+                    }
+                ) { Text("Показать панель (A11y)") }
+
+                OutlinedButton(onClick = {
+                    val i = Intent(LtAccessibilityService.ACTION_HIDE).setPackage(ctx.packageName)
+                    ctx.sendBroadcast(i)
+                }) { Text("Скрыть панель (A11y)") }
+            }
+
+            // FGS оставлен как опция (на Samsung может гаситься прошивкой)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     enabled = micGranted,
@@ -118,7 +147,7 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
             }) { Text("Тест уведомления (FGS)") }
 
             Spacer(Modifier.height(12.dp))
-            Text("Для Samsung используйте «Спец. возможности» — окно стабильнее, чем через FGS.", style = MaterialTheme.typography.bodySmall)
+            Text("Для Samsung используйте кнопки A11y — панель стабильно держится без FGS.", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
