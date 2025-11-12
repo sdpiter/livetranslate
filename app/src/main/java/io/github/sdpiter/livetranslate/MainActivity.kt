@@ -27,9 +27,7 @@ import io.github.sdpiter.livetranslate.debug.FgTestService
 import io.github.sdpiter.livetranslate.overlay.OverlayService
 
 class MainActivity : ComponentActivity() {
-
     private var askNotifPermission: (() -> Unit)? = null
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val notifLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -48,10 +46,7 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
         return if (Build.VERSION.SDK_INT >= 24) nm.areNotificationsEnabled() else true
     }
     fun isAccEnabled(): Boolean {
-        val enabled = Settings.Secure.getString(
-            ctx.contentResolver,
-            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-        )
+        val enabled = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
         val svc = "${ctx.packageName}/io.github.sdpiter.livetranslate.accessibility.LtAccessibilityService"
         return enabled?.split(':')?.contains(svc) == true
     }
@@ -78,15 +73,10 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
     }
 
     Surface(Modifier.fillMaxSize()) {
-        Column(
-            Modifier.fillMaxSize().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
+        Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("LiveTranslate α", style = MaterialTheme.typography.headlineSmall)
-            Text(
-                "Статус: Микрофон=$micGranted • Overlay=$overlayGranted • Уведомл.=$notificationsGranted • Доступность=$accEnabled",
-                style = MaterialTheme.typography.bodySmall
-            )
+            Text("Статус: Микрофон=$micGranted • Overlay=$overlayGranted • Уведомл.=$notificationsGranted • Доступность=$accEnabled",
+                style = MaterialTheme.typography.bodySmall)
 
             Button(onClick = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }) {
                 Text(if (micGranted) "Микрофон: разрешён" else "Разрешить микрофон")
@@ -106,17 +96,10 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
 
             // Управление A11y-оверлеем
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = {
-                        if (!accEnabled) {
-                            val i = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                            ctx.startActivity(i)
-                        } else {
-                            val i = Intent(LtAccessibilityService.ACTION_SHOW).setPackage(ctx.packageName)
-                            ctx.sendBroadcast(i)
-                        }
-                    }
-                ) { Text("Показать панель (A11y)") }
+                Button(onClick = {
+                    val i = Intent(LtAccessibilityService.ACTION_SHOW).setPackage(ctx.packageName)
+                    ctx.sendBroadcast(i)
+                }) { Text("Показать панель (A11y)") }
 
                 OutlinedButton(onClick = {
                     val i = Intent(LtAccessibilityService.ACTION_HIDE).setPackage(ctx.packageName)
@@ -124,7 +107,7 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
                 }) { Text("Скрыть панель (A11y)") }
             }
 
-            // FGS-оверлей (на Samsung часто гасится прошивкой — опционально)
+            // FGS — опция, на Samsung можно игнорировать
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     enabled = micGranted,
@@ -135,9 +118,9 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
                     }
                 ) { Text("Запустить оверлей (FGS)") }
 
-                OutlinedButton(onClick = {
-                    ctx.stopService(Intent(ctx, OverlayService::class.java))
-                }) { Text("Остановить FGS") }
+                OutlinedButton(onClick = { ctx.stopService(Intent(ctx, OverlayService::class.java)) }) {
+                    Text("Остановить FGS")
+                }
             }
 
             OutlinedButton(onClick = {
@@ -145,9 +128,6 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
                 val i = Intent(ctx, FgTestService::class.java)
                 ContextCompat.startForegroundService(ctx, i)
             }) { Text("Тест уведомления (FGS)") }
-
-            Spacer(Modifier.height(12.dp))
-            Text("Используйте A11y‑панель на Samsung — она стабильнее, чем FGS.", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
