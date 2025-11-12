@@ -19,7 +19,12 @@ import android.widget.Toast
 import io.github.sdpiter.livetranslate.asr.SpeechRecognizerEngine
 import io.github.sdpiter.livetranslate.mt.MlKitTranslator
 import io.github.sdpiter.livetranslate.tts.TtsEngine
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
 class LtAccessibilityService : AccessibilityService() {
 
@@ -58,7 +63,6 @@ class LtAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
 
-        // Register broadcast receiver with required flags on Android 14+
         val filter = IntentFilter().apply {
             addAction(ACTION_SHOW)
             addAction(ACTION_HIDE)
@@ -75,7 +79,7 @@ class LtAccessibilityService : AccessibilityService() {
             Toast.makeText(this, "Receiver error: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
         }
 
-        // Init engines (лёгко и безопасно)
+        // Инициализация движков
         asr = SpeechRecognizerEngine(this)
         translator = MlKitTranslator()
         tts = TtsEngine(this)
@@ -105,11 +109,16 @@ class LtAccessibilityService : AccessibilityService() {
     private fun showPanel() {
         if (panel != null) return
 
-        // UI (чистые View)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xCC222222.toInt())
             setPadding(dp(12), dp(10), dp(12), dp(12))
+        }
+
+        // Направление (создаём до header, чтобы ссылаться в onClick)
+        val dir = TextView(this).apply {
+            setTextColor(0xFFB0BEC5.toInt()); textSize = 14f
+            text = "Направление: EN → RU"
         }
 
         val header = LinearLayout(this).apply {
@@ -131,11 +140,6 @@ class LtAccessibilityService : AccessibilityService() {
                 setOnClickListener { hidePanel() }
             }
             addView(title); addView(btnSwap); addView(btnClose)
-        }
-
-        val dir = TextView(this).apply {
-            setTextColor(0xFFB0BEC5.toInt()); textSize = 14f
-            text = "Направление: EN → RU"
         }
 
         val tvOriginal = TextView(this).apply {
@@ -200,7 +204,7 @@ class LtAccessibilityService : AccessibilityService() {
 
             // Собираем текст из ASR
             launch {
-                asr.results.collect { text ->
+                asr.results.collectLatest { text ->
                     tvOriginal.text = text
                     if (text.isNotBlank()) {
                         val tr = try { translator.translate(text) } catch (_: Exception) { "" }
@@ -224,6 +228,7 @@ class LtAccessibilityService : AccessibilityService() {
         try { unregisterReceiver(controlReceiver) } catch (_: Exception) {}
         hidePanel()
         if (this::tts.isInitialized) tts.shutdown()
+        scope.cancel()
         super.onDestroy()
     }
 }
