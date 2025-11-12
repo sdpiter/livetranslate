@@ -3,6 +3,8 @@ pluginManagement {
         gradlePluginPortal()
         google()
         mavenCentral()
+        // не обязательно, но можно оставить и здесь
+        maven("https://alphacephei.com/maven")
     }
 }
 dependencyResolutionManagement {
@@ -10,6 +12,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // ВОТ ЭТО НУЖНО ДЛЯ VOSK
+        maven("https://alphacephei.com/maven")
     }
 }
 rootProject.name = "LiveTranslate"
