@@ -1,9 +1,8 @@
 pluginManagement {
     repositories {
-        gradlePluginPortal()
         google()
         mavenCentral()
-        maven("https://alphacephei.com/maven")
+        gradlePluginPortal()
     }
 }
 dependencyResolutionManagement {
@@ -11,10 +10,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven("https://alphacephei.com/maven")
-        // при желании можно добавить JitPack как запасной
-        // maven("https://jitpack.io")
     }
 }
-rootProject.name = "LiveTranslate"
+rootProject.name = "livetranslate"
 include(":app")
