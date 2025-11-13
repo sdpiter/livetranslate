@@ -1,7 +1,10 @@
 package io.github.sdpiter.livetranslate.accessibility
 
 import android.accessibilityservice.AccessibilityService
-import android.content.*
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.os.Build
@@ -14,6 +17,7 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import io.github.sdpiter.livetranslate.asr.VoskEngine
@@ -35,14 +39,25 @@ class LtAccessibilityService : AccessibilityService() {
         const val ACTION_TOGGLE = "io.github.sdpiter.livetranslate.accessibility.TOGGLE"
     }
 
+    // Window
     private lateinit var wm: WindowManager
     private var panel: View? = null
+    private var dock: View? = null
 
+    // UI refs (панель)
     private var dirView: TextView? = null
     private var tvOriginalView: TextView? = null
     private var tvTranslatedView: TextView? = null
     private var btnStartPause: Button? = null
 
+    // История
+    private var historyScroll: ScrollView? = null
+    private var historyList: LinearLayout? = null
+    private val history: ArrayDeque<Pair<String, String>> = ArrayDeque()
+    private val maxHistory: Int = 20
+    private var lastPushedOriginal: String = ""
+
+    // Handlers / scopes / errors
     private val mainHandler = Handler(Looper.getMainLooper())
     private val errHandler = CoroutineExceptionHandler { _, e ->
         logE("CEH", e)
@@ -51,29 +66,32 @@ class LtAccessibilityService : AccessibilityService() {
             updateStateUi()
         }
     }
-    private val uiScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + errHandler)
-    private val workScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + errHandler)
+    private val uiScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + errHandler)
+    private val workScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + errHandler)
 
+    // Engines
     private var vosk: VoskEngine? = null
     private lateinit var translator: MlKitTranslator
     private lateinit var tts: TtsEngine
 
-    private var listenLang = "en-US"
-    private var targetLang = "ru"
-    private var dialogMode = false
-    private var listening = false
+    // State
+    private var listenLang: String = "en-US"
+    private var targetLang: String = "ru"
+    private var dialogMode: Boolean = false
+    private var listening: Boolean = false
     private var collectJob: Job? = null
 
+    // гонки
     private val engineMutex = Mutex()
-    private var isToggling = false
-    private var lastTapTs = 0L
+    private var isToggling: Boolean = false
+    private var lastTapTs: Long = 0L
 
     private val controlReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
-                ACTION_SHOW   -> showPanel()
+                ACTION_SHOW   -> { hideDock(); showPanel() }
                 ACTION_HIDE   -> hidePanel()
-                ACTION_TOGGLE -> if (panel == null) showPanel() else hidePanel()
+                ACTION_TOGGLE -> if (panel == null) { hideDock(); showPanel() } else hidePanel()
             }
         }
     }
@@ -82,6 +100,7 @@ class LtAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
 
+        // Управление из приложения
         val filter = IntentFilter().apply {
             addAction(ACTION_SHOW); addAction(ACTION_HIDE); addAction(ACTION_TOGGLE)
         }
@@ -90,6 +109,7 @@ class LtAccessibilityService : AccessibilityService() {
             else @Suppress("DEPRECATION") registerReceiver(controlReceiver, filter)
         } catch (e: Exception) { logE("registerReceiver", e) }
 
+        // Движки
         vosk = VoskEngine(
             this,
             onError = { logE("vosk", it) },
@@ -98,7 +118,7 @@ class LtAccessibilityService : AccessibilityService() {
         translator = MlKitTranslator()
         tts = TtsEngine(this)
 
-        // АВТО-ПРЕДЗАГРУЗКА EN↔RU (в фоне, с логом)
+        // Авто-предзагрузка EN↔RU (фон)
         workScope.launch(errHandler) {
             logI("preload.start")
             try {
@@ -110,6 +130,8 @@ class LtAccessibilityService : AccessibilityService() {
             }
         }
 
+        // Покажем док по умолчанию
+        showDock()
         logI("service.connected")
     }
 
@@ -126,8 +148,10 @@ class LtAccessibilityService : AccessibilityService() {
         PixelFormat.TRANSLUCENT
     ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = 40 }
 
+    // Ровные ряды 3×2
     private fun row3(): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL; weightSum = 3f
+        orientation = LinearLayout.HORIZONTAL
+        weightSum = 3f
     }
 
     private fun btn(label: String, onClick: () -> Unit): Button =
@@ -138,13 +162,40 @@ class LtAccessibilityService : AccessibilityService() {
                 val m = dp(6); setMargins(m, m, m, m)
             }
             setSingleLine(true)
-            ellipsize = android.text.TextUtils.TruncateAt.END
+            ellipsize = TextUtils.TruncateAt.END
             setOnClickListener {
                 val now = System.currentTimeMillis()
                 if (!isToggling && now - lastTapTs >= 350) { lastTapTs = now; onClick() }
             }
         }
 
+    // Док-бар (узкая полоска «Развернуть»)
+    private fun showDock() {
+        if (dock != null) return
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(0xCC673AB7.toInt()) // фиолетовый
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            val title = TextView(this@LtAccessibilityService).apply {
+                setTextColor(Color.WHITE); textSize = 14f
+                text = "LiveTranslate — развернуть"
+                setOnClickListener { hideDock(); showPanel() }
+            }
+            val close = TextView(this@LtAccessibilityService).apply {
+                setTextColor(Color.WHITE); textSize = 16f; text = "  ✕"
+                setOnClickListener { hideDock() }
+            }
+            addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(close)
+        }
+        try { wm.addView(bar, lpWindow().apply { y = 0 }); dock = bar } catch (e: Exception) { logE("dock.add", e) }
+    }
+    private fun hideDock() {
+        try { dock?.let { wm.removeView(it) } } catch (_: Exception) {}
+        dock = null
+    }
+
+    // Основная панель
     private fun showPanel() {
         if (panel != null) return
 
@@ -154,6 +205,7 @@ class LtAccessibilityService : AccessibilityService() {
             setPadding(dp(12), dp(10), dp(12), dp(12))
         }
 
+        // Header
         val header = row3().apply {
             val title = TextView(this@LtAccessibilityService).apply {
                 setTextColor(Color.WHITE); textSize = 16f; text = "LiveTranslate (Accessibility)"
@@ -172,6 +224,14 @@ class LtAccessibilityService : AccessibilityService() {
         tvOriginalView = TextView(this).apply { setTextColor(0xFFB0BEC5.toInt()); textSize = 14f }
         tvTranslatedView = TextView(this).apply { setTextColor(Color.WHITE); textSize = 16f }
 
+        // История: ScrollView + список
+        historyList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        historyScroll = ScrollView(this).apply {
+            isFillViewport = false
+            addView(historyList, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        }
+
+        // Ряд 1
         val row1 = row3().apply {
             addView(btn("Субтитры") { dialogMode = false; startSafe() })
             addView(btn("Диалог") { dialogMode = true; startSafe() })
@@ -181,9 +241,10 @@ class LtAccessibilityService : AccessibilityService() {
             addView(btnStartPause)
         }
 
+        // Ряд 2
         val row2 = row3().apply {
             addView(btn("Swap EN↔RU") { swap(restart = listening) })
-            addView(btn("Очистить") { tvOriginalView?.text = ""; tvTranslatedView?.text = "" })
+            addView(btn("Очистить") { clearAll() })
             addView(btn("Скрыть") { hidePanel() })
         }
 
@@ -191,11 +252,17 @@ class LtAccessibilityService : AccessibilityService() {
         root.addView(dirView)
         root.addView(tvOriginalView)
         root.addView(tvTranslatedView)
+        // История (высота ~ 120dp)
+        root.addView(historyScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(120)))
         root.addView(row1)
         root.addView(row2)
 
-        try { wm.addView(root, lpWindow()); panel = root } catch (e: Exception) {
-            logE("addView", e); Toast.makeText(this, "Ошибка overlay: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+        try {
+            wm.addView(root, lpWindow())
+            panel = root
+        } catch (e: Exception) {
+            logE("addView", e)
+            Toast.makeText(this, "Ошибка overlay: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -203,6 +270,41 @@ class LtAccessibilityService : AccessibilityService() {
         try { panel?.let { wm.removeView(it) } } catch (_: Exception) {}
         panel = null
         stopSafe()
+        showDock()
+    }
+
+    // Логика
+    private fun clearAll() {
+        tvOriginalView?.text = ""
+        tvTranslatedView?.text = ""
+        history.clear()
+        historyList?.removeAllViews()
+        lastPushedOriginal = ""
+    }
+
+    private fun pushHistory(orig: String, tr: String) {
+        val o = orig.trim()
+        if (o.isEmpty()) return
+        if (o == lastPushedOriginal) return
+        lastPushedOriginal = o
+        if (history.size >= maxHistory) history.removeFirst()
+        history.addLast(o to tr)
+        // перерисовать список
+        historyList?.let { list ->
+            list.removeAllViews()
+            history.forEach { (oo, tt) ->
+                val line = TextView(this).apply {
+                    setTextColor(0xFFB0BEC5.toInt()); textSize = 13f
+                    text = if (tt.isNotBlank()) "• $oo  →  $tt" else "• $oo"
+                }
+                list.addView(line)
+            }
+            historyScroll?.post { historyScroll?.fullScroll(View.FOCUS_DOWN) }
+        }
+    }
+
+    private fun updateStateUi() {
+        btnStartPause?.text = if (listening) "Пауза" else "Старт"
     }
 
     private fun swap(restart: Boolean) {
@@ -211,10 +313,6 @@ class LtAccessibilityService : AccessibilityService() {
         targetLang = if (wasRu) "ru" else "en"
         dirView?.text = "Направление: ${if (listenLang.startsWith("ru")) "RU" else "EN"} → ${targetLang.uppercase()}"
         if (restart) stopSafe { startSafe() }
-    }
-
-    private fun updateStateUi() {
-        btnStartPause?.text = if (listening) "Пауза" else "Старт"
     }
 
     private fun startSafe() {
@@ -233,12 +331,20 @@ class LtAccessibilityService : AccessibilityService() {
                     collectJob = launch(errHandler) {
                         launch(errHandler) {
                             v.results.collectLatest { text ->
-                                uiScope.launch { tvOriginalView?.text = text }
+                                uiScope.launch {
+                                    tvOriginalView?.text = text
+                                }
                                 if (text.isNotBlank()) {
                                     val tr = translator.translateSafe(text)
                                     uiScope.launch {
                                         tvTranslatedView?.text = tr
-                                        if (dialogMode && tr.isNotBlank()) tts.speak(tr, targetLang)
+                                    }
+                                    // добавляем в историю «существенные» изменения
+                                    if (text.length >= 10 || text.endsWith(".") || text.endsWith("!") || text.endsWith("?")) {
+                                        uiScope.launch { pushHistory(text, tr) }
+                                    }
+                                    if (dialogMode && tr.isNotBlank()) {
+                                        uiScope.launch { tts.speak(tr, targetLang) }
                                     }
                                 }
                             }
@@ -282,10 +388,12 @@ class LtAccessibilityService : AccessibilityService() {
         try { unregisterReceiver(controlReceiver) } catch (_: Exception) {}
         try { vosk?.stop() } catch (_: Exception) {}
         try { panel?.let { wm.removeView(it) } } catch (_: Exception) {}
+        try { dock?.let { wm.removeView(it) } } catch (_: Exception) {}
         if (this::tts.isInitialized) tts.shutdown()
         super.onDestroy()
     }
 
+    // Лог
     private fun logE(tag: String, e: Throwable) {
         try {
             val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
