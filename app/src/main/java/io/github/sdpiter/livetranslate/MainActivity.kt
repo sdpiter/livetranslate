@@ -30,11 +30,10 @@ import io.github.sdpiter.livetranslate.accessibility.LtAccessibilityService
 import io.github.sdpiter.livetranslate.debug.FgTestService
 import io.github.sdpiter.livetranslate.overlay.OverlayService
 import io.github.sdpiter.livetranslate.mt.MlKitTranslator
+import io.github.sdpiter.livetranslate.settings.SettingsStorage
 
 class MainActivity : ComponentActivity() {
-
     private var askNotifPermission: (() -> Unit)? = null
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -50,6 +49,9 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
     val ctx = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
+
+    // init settings
+    LaunchedEffect(Unit) { SettingsStorage.init(ctx) }
 
     fun notifEnabled(): Boolean {
         val nm = ctx.getSystemService(NotificationManager::class.java)
@@ -70,12 +72,20 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
     var notificationsGranted by remember { mutableStateOf(notifEnabled()) }
     var accEnabled by remember { mutableStateOf(isAccEnabled()) }
 
+    // settings states
+    var autoDetect by remember { mutableStateOf(SettingsStorage.autoDetect()) }
+    var preloadOnStart by remember { mutableStateOf(SettingsStorage.preloadOnStart()) }
+    var fontScale by remember { mutableStateOf(SettingsStorage.fontScale()) }
+
     DisposableEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, e ->
             if (e == Lifecycle.Event.ON_RESUME) {
                 overlayGranted = Settings.canDrawOverlays(ctx)
                 notificationsGranted = notifEnabled()
                 accEnabled = isAccEnabled()
+                autoDetect = SettingsStorage.autoDetect()
+                preloadOnStart = SettingsStorage.preloadOnStart()
+                fontScale = SettingsStorage.fontScale()
             }
         }
         lifecycleOwner.lifecycle.addObserver(obs)
@@ -88,9 +98,10 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text("LiveTranslate α", style = MaterialTheme.typography.headlineSmall)
-            Text("Статус: Микрофон=$micGranted • Overlay=$overlayGranted • Уведомл.=$notificationsGranted • Доступность=$accEnabled",
+            Text("Статус: Mic=$micGranted • Overlay=$overlayGranted • Нотиф.=$notificationsGranted • A11y=$accEnabled",
                 style = MaterialTheme.typography.bodySmall)
 
+            // Разрешения
             Button(onClick = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }) {
                 Text(if (micGranted) "Микрофон: разрешён" else "Разрешить микрофон")
             }
@@ -103,9 +114,8 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
                 ctx.startActivity(i)
             }) { Text("Открыть настройки уведомлений") }
             Button(onClick = {
-                val i = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                ctx.startActivity(i)
-            }) { Text(if (accEnabled) "Спец. возможности: включено" else "Открыть Спец. возможности") }
+                val i = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS); ctx.startActivity(i)
+            }) { Text(if (accEnabled) "Спец. возможности: Включено" else "Открыть Спец. возможности") }
 
             // Управление A11y
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -119,7 +129,36 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
                 }) { Text("Скрыть панель (A11y)") }
             }
 
-            // FGS (опционально)
+            // Настройки
+            Divider()
+            Text("Настройки", style = MaterialTheme.typography.titleMedium)
+
+            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                Text("Автодетект языка")
+                Switch(checked = autoDetect, onCheckedChange = {
+                    autoDetect = it; SettingsStorage.setAutoDetect(ctx, it)
+                })
+            }
+            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                Text("Предзагружать модели при старте")
+                Switch(checked = preloadOnStart, onCheckedChange = {
+                    preloadOnStart = it; SettingsStorage.setPreloadOnStart(ctx, it)
+                })
+            }
+            Column {
+                Text("Размер шрифта панели: ${String.format("%.2f", fontScale)}x")
+                Slider(
+                    value = fontScale,
+                    onValueChange = {
+                        fontScale = it
+                        SettingsStorage.setFontScale(ctx, it)
+                    },
+                    valueRange = 0.8f..1.4f,
+                    steps = 6
+                )
+            }
+
+            // Сервис/тест
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = {
                     askNotifPermission?.invoke()
