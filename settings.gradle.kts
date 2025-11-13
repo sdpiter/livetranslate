@@ -1,12 +1,19 @@
-// Root build.gradle.kts
-
-plugins {
-    // подключаем Android и Kotlin плагины с нужными версиями
-    id("com.android.application") version "8.5.2" apply false
-    id("org.jetbrains.kotlin.android") version "1.9.22" apply false
+pluginManagement {
+    repositories {
+        // 👇 Google ОБЯЗАТЕЛЕН ПЕРВЫМ!
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
 }
 
-// задача очистки проекта
-tasks.register<Delete>("clean") {
-    delete(rootProject.buildDir)
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
 }
+
+rootProject.name = "livetranslate"
+include(":app")
