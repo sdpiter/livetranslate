@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">LiveTranslate</string>
-    <string name="acc_desc">Показывает оверлей LiveTranslate поверх приложений</string>
+    <string name="accessibility_service_description">Сервис для перевода речи в реальном времени.</string>
 </resources>
