@@ -1,7 +1,5 @@
 package io.github.sdpiter.livetranslate
 
-import androidx.core.content.FileProvider
-import java.io.File
 import android.Manifest
 import android.app.NotificationManager
 import android.content.Intent
@@ -10,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -21,19 +20,27 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.launch
+import java.io.File
 import io.github.sdpiter.livetranslate.accessibility.LtAccessibilityService
 import io.github.sdpiter.livetranslate.debug.FgTestService
 import io.github.sdpiter.livetranslate.overlay.OverlayService
+import io.github.sdpiter.livetranslate.mt.MlKitTranslator
 
 class MainActivity : ComponentActivity() {
+
     private var askNotifPermission: (() -> Unit)? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         val notifLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
         askNotifPermission = { if (Build.VERSION.SDK_INT >= 33) notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
+
         setContent { MaterialTheme { Landing(askNotifPermission) } }
     }
 }
@@ -42,6 +49,7 @@ class MainActivity : ComponentActivity() {
 fun Landing(askNotifPermission: (() -> Unit)?) {
     val ctx = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
 
     fun notifEnabled(): Boolean {
         val nm = ctx.getSystemService(NotificationManager::class.java)
@@ -75,7 +83,10 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
     }
 
     Surface(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(
+            Modifier.fillMaxSize().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             Text("LiveTranslate α", style = MaterialTheme.typography.headlineSmall)
             Text("Статус: Микрофон=$micGranted • Overlay=$overlayGranted • Уведомл.=$notificationsGranted • Доступность=$accEnabled",
                 style = MaterialTheme.typography.bodySmall)
@@ -96,33 +107,28 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
                 ctx.startActivity(i)
             }) { Text(if (accEnabled) "Спец. возможности: включено" else "Открыть Спец. возможности") }
 
-            // Управление A11y-оверлеем
+            // Управление A11y
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = {
                     val i = Intent(LtAccessibilityService.ACTION_SHOW).setPackage(ctx.packageName)
                     ctx.sendBroadcast(i)
                 }) { Text("Показать панель (A11y)") }
-
                 OutlinedButton(onClick = {
                     val i = Intent(LtAccessibilityService.ACTION_HIDE).setPackage(ctx.packageName)
                     ctx.sendBroadcast(i)
                 }) { Text("Скрыть панель (A11y)") }
             }
 
-            // FGS — опция, на Samsung можно игнорировать
+            // FGS (опционально)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    enabled = micGranted,
-                    onClick = {
-                        askNotifPermission?.invoke()
-                        val i = Intent(ctx, OverlayService::class.java).setAction(OverlayService.ACTION_START)
-                        ContextCompat.startForegroundService(ctx, i)
-                    }
-                ) { Text("Запустить оверлей (FGS)") }
-
-                OutlinedButton(onClick = { ctx.stopService(Intent(ctx, OverlayService::class.java)) }) {
-                    Text("Остановить FGS")
-                }
+                Button(onClick = {
+                    askNotifPermission?.invoke()
+                    val i = Intent(ctx, OverlayService::class.java).setAction(OverlayService.ACTION_START)
+                    ContextCompat.startForegroundService(ctx, i)
+                }) { Text("Запустить оверлей (FGS)") }
+                OutlinedButton(onClick = {
+                    ctx.stopService(Intent(ctx, OverlayService::class.java))
+                }) { Text("Остановить FGS") }
             }
 
             OutlinedButton(onClick = {
@@ -132,19 +138,29 @@ fun Landing(askNotifPermission: (() -> Unit)?) {
             }) { Text("Тест уведомления (FGS)") }
 
             OutlinedButton(onClick = {
-    val f = File(ctx.filesDir, "lt.log")
-    if (!f.exists()) {
-        // создадим пустой лог, чтобы было что шарить
-        f.writeText("log empty\n")
-    }
-    val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", f)
-    val share = Intent(Intent.ACTION_SEND).apply {
-        type = "text/plain"
-        putExtra(Intent.EXTRA_STREAM, uri)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    }
-    ctx.startActivity(Intent.createChooser(share, "Поделиться логом"))
-}) { Text("Поделиться логом") }
+                val f = File(ctx.filesDir, "lt.log")
+                if (!f.exists()) f.writeText("log empty\n")
+                val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", f)
+                val share = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                ctx.startActivity(Intent.createChooser(share, "Поделиться логом"))
+            }) { Text("Поделиться логом") }
+
+            OutlinedButton(onClick = {
+                scope.launch {
+                    val tr = MlKitTranslator()
+                    try {
+                        tr.ensure("en-US", "ru-RU")
+                        tr.ensure("ru-RU", "en-US")
+                        Toast.makeText(ctx, "Модели EN↔RU загружены", Toast.LENGTH_SHORT).show()
+                    } catch (e: Exception) {
+                        Toast.makeText(ctx, "Ошибка предзагрузки: ${e.javaClass.simpleName}", Toast.LENGTH_SHORT).show()
+                    } finally { tr.close() }
+                }
+            }) { Text("Предзагрузить модели (EN↔RU)") }
         }
     }
 }
