@@ -1,4 +1,12 @@
+// Root build.gradle.kts
+
 plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    // подключаем Android и Kotlin плагины с нужными версиями
+    id("com.android.application") version "8.5.2" apply false
+    id("org.jetbrains.kotlin.android") version "1.9.22" apply false
+}
+
+// задача очистки проекта
+tasks.register<Delete>("clean") {
+    delete(rootProject.buildDir)
 }
