@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.android") version "1.9.22" // ← Обновлено до последней стабильной версии
+    id("kotlin-parcelize") // ← Добавлено для поддержки @Parcelize (если используется)
 }
 
 android {
@@ -13,7 +14,12 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1-alpha1"
-        vectorDrawables { useSupportLibrary = true }
+
+        // Добавлено для совместимости с ML Kit и Vosk
+        multiDexEnabled true
+        vectorDrawables {
+            useSupportLibrary = true
+        }
     }
 
     buildTypes {
@@ -24,47 +30,81 @@ android {
                 "proguard-rules.pro"
             )
         }
-        debug { isMinifyEnabled = false }
+        debug {
+            isMinifyEnabled = false
+            isDebuggable = true
+        }
     }
 
     buildFeatures {
         compose = true
         buildConfig = true
+        // Добавлено для ViewBinding (если используется)
+        viewBinding = true
     }
-    composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
+
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.14"
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    packaging { resources.excludes += setOf("META-INF/**") }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    packaging {
+        resources {
+            excludes += [
+                "META-INF/**",
+                "lib/x86/**",          // Исключаем x86 для уменьшения размера APK
+                "lib/x86_64/**",       // (опционально, если не нужна поддержка эмуляторов)
+                "*.so"                 // Vosk уже включает нужные .so через jna@aar
+            ]
+        }
+    }
 }
 
 dependencies {
+    // --- Compose ---
     val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
     implementation(composeBom)
     androidTestImplementation(composeBom)
-
     implementation("androidx.activity:activity-compose:1.9.0")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")
-    implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.2")
 
+    // --- AndroidX ---
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.2")
+    implementation("androidx.appcompat:appcompat:1.6.1")
+    implementation("androidx.multidex:multidex:2.0.1") // ← Добавлено для multiDex
+
+    // --- Material Design ---
     implementation("com.google.android.material:material:1.12.0")
 
-    // ML Kit Translate (on-device)
+    // --- ML Kit (Offline Translate) ---
     implementation("com.google.mlkit:translate:17.0.2")
 
-    // Coroutines
+    // --- Coroutines ---
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
-    // Vosk + JNA: исключаем транзитивную JNA из Vosk и добавляем jna как AAR (с .so)
+    // --- Vosk (Offline Speech Recognition) + JNA ---
     implementation("com.alphacephei:vosk-android:0.3.45") {
-        exclude(group = "net.java.dev.jna", module = "jna")
+        exclude(group = "net.java.dev.jna", module = "jna") // Исключаем транзитивную JNA
     }
-    implementation("net.java.dev.jna:jna:5.13.0@aar")
+    implementation("net.java.dev.jna:jna:5.13.0@aar") // Подключаем JNA как AAR с native libs
+
+    // --- TTS (Text-to-Speech) ---
+    implementation("com.google.android.tts:tts:3.0.0")
+
+    // --- Логирование (опционально) ---
+    debugImplementation("com.squareup.leakcanary:leakcanary-android:2.12")
 }
