@@ -1,16 +1,14 @@
 package io.github.sdpiter.livetranslate.accessibility
 
 import android.accessibilityservice.AccessibilityService
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
+import android.content.*
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.text.TextUtils
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -22,6 +20,7 @@ import android.widget.TextView
 import android.widget.Toast
 import io.github.sdpiter.livetranslate.asr.VoskEngine
 import io.github.sdpiter.livetranslate.mt.MlKitTranslator
+import io.github.sdpiter.livetranslate.settings.SettingsStorage
 import io.github.sdpiter.livetranslate.tts.TtsEngine
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
@@ -44,7 +43,7 @@ class LtAccessibilityService : AccessibilityService() {
     private var panel: View? = null
     private var dock: View? = null
 
-    // UI refs (панель)
+    // UI refs
     private var dirView: TextView? = null
     private var tvOriginalView: TextView? = null
     private var tvTranslatedView: TextView? = null
@@ -57,7 +56,7 @@ class LtAccessibilityService : AccessibilityService() {
     private val maxHistory: Int = 20
     private var lastPushedOriginal: String = ""
 
-    // Handlers / scopes / errors
+    // Handlers / scopes
     private val mainHandler = Handler(Looper.getMainLooper())
     private val errHandler = CoroutineExceptionHandler { _, e ->
         logE("CEH", e)
@@ -81,6 +80,13 @@ class LtAccessibilityService : AccessibilityService() {
     private var listening: Boolean = false
     private var collectJob: Job? = null
 
+    // Автодетект
+    private var autoDetect: Boolean = true
+    private var lastDetect: String = "en" // "en"/"ru"
+
+    // Шрифт панели (масштаб)
+    private var fontScale: Float = 1.0f
+
     // гонки
     private val engineMutex = Mutex()
     private var isToggling: Boolean = false
@@ -92,6 +98,7 @@ class LtAccessibilityService : AccessibilityService() {
                 ACTION_SHOW   -> { hideDock(); showPanel() }
                 ACTION_HIDE   -> hidePanel()
                 ACTION_TOGGLE -> if (panel == null) { hideDock(); showPanel() } else hidePanel()
+                SettingsStorage.ACTION_CHANGED -> applySettings()
             }
         }
     }
@@ -100,16 +107,19 @@ class LtAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
 
-        // Управление из приложения
+        // Инициализируем настройки
+        SettingsStorage.init(this)
+        applySettings() // установить autoDetect+fontScale
+
         val filter = IntentFilter().apply {
             addAction(ACTION_SHOW); addAction(ACTION_HIDE); addAction(ACTION_TOGGLE)
+            addAction(SettingsStorage.ACTION_CHANGED)
         }
         try {
             if (Build.VERSION.SDK_INT >= 34) registerReceiver(controlReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
             else @Suppress("DEPRECATION") registerReceiver(controlReceiver, filter)
         } catch (e: Exception) { logE("registerReceiver", e) }
 
-        // Движки
         vosk = VoskEngine(
             this,
             onError = { logE("vosk", it) },
@@ -118,21 +128,26 @@ class LtAccessibilityService : AccessibilityService() {
         translator = MlKitTranslator()
         tts = TtsEngine(this)
 
-        // Авто-предзагрузка EN↔RU (фон)
-        workScope.launch(errHandler) {
-            logI("preload.start")
-            try {
-                translator.ensure("en-US", "ru-RU")
-                translator.ensure("ru-RU", "en-US")
-                logI("preload.done")
-            } catch (e: Exception) {
-                logE("preload", e)
+        // Предзагрузка EN↔RU (если включено)
+        if (SettingsStorage.preloadOnStart()) {
+            workScope.launch(errHandler) {
+                logI("preload.start")
+                try {
+                    translator.ensure("en-US", "ru-RU")
+                    translator.ensure("ru-RU", "en-US")
+                    logI("preload.done")
+                } catch (e: Exception) { logE("preload", e) }
             }
         }
 
-        // Покажем док по умолчанию
+        // Док-бар
         showDock()
         logI("service.connected")
+    }
+
+    private fun applySettings() {
+        autoDetect = SettingsStorage.autoDetect()
+        fontScale = SettingsStorage.fontScale()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
@@ -148,16 +163,17 @@ class LtAccessibilityService : AccessibilityService() {
         PixelFormat.TRANSLUCENT
     ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = 40 }
 
-    // Ровные ряды 3×2
     private fun row3(): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        weightSum = 3f
+        orientation = LinearLayout.HORIZONTAL; weightSum = 3f
     }
+
+    private fun sp(base: Float): Float = base * fontScale
 
     private fun btn(label: String, onClick: () -> Unit): Button =
         Button(this).apply {
             text = label
             isAllCaps = false
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, sp(14f))
             layoutParams = LinearLayout.LayoutParams(0, dp(46), 1f).apply {
                 val m = dp(6); setMargins(m, m, m, m)
             }
@@ -169,20 +185,21 @@ class LtAccessibilityService : AccessibilityService() {
             }
         }
 
-    // Док-бар (узкая полоска «Развернуть»)
+    // Док
     private fun showDock() {
         if (dock != null) return
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(0xCC673AB7.toInt()) // фиолетовый
+            setBackgroundColor(0xCC673AB7.toInt())
             setPadding(dp(12), dp(8), dp(12), dp(8))
             val title = TextView(this@LtAccessibilityService).apply {
-                setTextColor(Color.WHITE); textSize = 14f
+                setTextColor(Color.WHITE)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, sp(14f))
                 text = "LiveTranslate — развернуть"
                 setOnClickListener { hideDock(); showPanel() }
             }
             val close = TextView(this@LtAccessibilityService).apply {
-                setTextColor(Color.WHITE); textSize = 16f; text = "  ✕"
+                setTextColor(Color.WHITE); setTextSize(TypedValue.COMPLEX_UNIT_SP, sp(16f)); text = "  ✕"
                 setOnClickListener { hideDock() }
             }
             addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
@@ -195,7 +212,7 @@ class LtAccessibilityService : AccessibilityService() {
         dock = null
     }
 
-    // Основная панель
+    // Панель
     private fun showPanel() {
         if (panel != null) return
 
@@ -205,13 +222,12 @@ class LtAccessibilityService : AccessibilityService() {
             setPadding(dp(12), dp(10), dp(12), dp(12))
         }
 
-        // Header
         val header = row3().apply {
             val title = TextView(this@LtAccessibilityService).apply {
-                setTextColor(Color.WHITE); textSize = 16f; text = "LiveTranslate (Accessibility)"
+                setTextColor(Color.WHITE); setTextSize(TypedValue.COMPLEX_UNIT_SP, sp(16f)); text = "LiveTranslate (Accessibility)"
             }
             val close = TextView(this@LtAccessibilityService).apply {
-                setTextColor(Color.WHITE); textSize = 18f; text = "   ✕"
+                setTextColor(Color.WHITE); setTextSize(TypedValue.COMPLEX_UNIT_SP, sp(18f)); text = "   ✕"
                 setOnClickListener { hidePanel() }
             }
             addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f))
@@ -219,19 +235,16 @@ class LtAccessibilityService : AccessibilityService() {
         }
 
         dirView = TextView(this).apply {
-            setTextColor(0xFFB0BEC5.toInt()); textSize = 14f; text = "Направление: EN → RU"
+            setTextColor(0xFFB0BEC5.toInt()); setTextSize(TypedValue.COMPLEX_UNIT_SP, sp(14f))
+            text = "Направление: EN → RU"
         }
-        tvOriginalView = TextView(this).apply { setTextColor(0xFFB0BEC5.toInt()); textSize = 14f }
-        tvTranslatedView = TextView(this).apply { setTextColor(Color.WHITE); textSize = 16f }
+        tvOriginalView = TextView(this).apply { setTextColor(0xFFB0BEC5.toInt()); setTextSize(TypedValue.COMPLEX_UNIT_SP, sp(14f)) }
+        tvTranslatedView = TextView(this).apply { setTextColor(Color.WHITE); setTextSize(TypedValue.COMPLEX_UNIT_SP, sp(16f)) }
 
-        // История: ScrollView + список
+        // История
         historyList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        historyScroll = ScrollView(this).apply {
-            isFillViewport = false
-            addView(historyList, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-        }
+        historyScroll = ScrollView(this).apply { addView(historyList) }
 
-        // Ряд 1
         val row1 = row3().apply {
             addView(btn("Субтитры") { dialogMode = false; startSafe() })
             addView(btn("Диалог") { dialogMode = true; startSafe() })
@@ -241,7 +254,6 @@ class LtAccessibilityService : AccessibilityService() {
             addView(btnStartPause)
         }
 
-        // Ряд 2
         val row2 = row3().apply {
             addView(btn("Swap EN↔RU") { swap(restart = listening) })
             addView(btn("Очистить") { clearAll() })
@@ -252,17 +264,12 @@ class LtAccessibilityService : AccessibilityService() {
         root.addView(dirView)
         root.addView(tvOriginalView)
         root.addView(tvTranslatedView)
-        // История (высота ~ 120dp)
         root.addView(historyScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(120)))
         root.addView(row1)
         root.addView(row2)
 
-        try {
-            wm.addView(root, lpWindow())
-            panel = root
-        } catch (e: Exception) {
-            logE("addView", e)
-            Toast.makeText(this, "Ошибка overlay: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+        try { wm.addView(root, lpWindow()); panel = root } catch (e: Exception) {
+            logE("addView", e); Toast.makeText(this, "Ошибка overlay: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -273,7 +280,7 @@ class LtAccessibilityService : AccessibilityService() {
         showDock()
     }
 
-    // Логика
+    // История
     private fun clearAll() {
         tvOriginalView?.text = ""
         tvTranslatedView?.text = ""
@@ -281,7 +288,6 @@ class LtAccessibilityService : AccessibilityService() {
         historyList?.removeAllViews()
         lastPushedOriginal = ""
     }
-
     private fun pushHistory(orig: String, tr: String) {
         val o = orig.trim()
         if (o.isEmpty()) return
@@ -289,12 +295,11 @@ class LtAccessibilityService : AccessibilityService() {
         lastPushedOriginal = o
         if (history.size >= maxHistory) history.removeFirst()
         history.addLast(o to tr)
-        // перерисовать список
         historyList?.let { list ->
             list.removeAllViews()
             history.forEach { (oo, tt) ->
                 val line = TextView(this).apply {
-                    setTextColor(0xFFB0BEC5.toInt()); textSize = 13f
+                    setTextColor(0xFFB0BEC5.toInt()); setTextSize(TypedValue.COMPLEX_UNIT_SP, sp(13f))
                     text = if (tt.isNotBlank()) "• $oo  →  $tt" else "• $oo"
                 }
                 list.addView(line)
@@ -307,12 +312,28 @@ class LtAccessibilityService : AccessibilityService() {
         btnStartPause?.text = if (listening) "Пауза" else "Старт"
     }
 
-    private fun swap(restart: Boolean) {
-        val wasRu = listenLang.startsWith("ru", true)
-        listenLang = if (wasRu) "en-US" else "ru-RU"
-        targetLang = if (wasRu) "ru" else "en"
-        dirView?.text = "Направление: ${if (listenLang.startsWith("ru")) "RU" else "EN"} → ${targetLang.uppercase()}"
-        if (restart) stopSafe { startSafe() }
+    // Автодетект (простая эвристика)
+    private fun detectLang(text: String): String {
+        // если есть кириллица — ru, иначе en
+        return if (CYR_REGEX.containsMatchIn(text)) "ru" else "en"
+    }
+
+    private fun maybeAutoSwitchLanguage(text: String) {
+        if (!autoDetect) return
+        // переключаемся, только если фраза «существенная»
+        val significant = text.length >= 10 || text.endsWith(".") || text.endsWith("!") || text.endsWith("?")
+        if (!significant) return
+        val detected = detectLang(text)
+        if (detected != lastDetect) {
+            lastDetect = detected
+            val newListen = if (detected == "ru") "ru-RU" else "en-US"
+            if (newListen != listenLang) {
+                listenLang = newListen
+                targetLang = if (detected == "ru") "en" else "ru"
+                dirView?.text = "Направление: ${if (listenLang.startsWith("ru")) "RU" else "EN"} → ${targetLang.uppercase()}"
+                if (listening) stopSafe { startSafe() }
+            }
+        }
     }
 
     private fun startSafe() {
@@ -325,23 +346,21 @@ class LtAccessibilityService : AccessibilityService() {
                     stopInternal()
                     try { translator.ensure(listenLang, targetLang) } catch (e: Exception) { logE("translator.ensure", e) }
                     listening = true
+                    lastDetect = if (listenLang.startsWith("ru")) "ru" else "en"
                     uiScope.launch { updateStateUi() }
 
                     val v = vosk ?: return@withLock
                     collectJob = launch(errHandler) {
                         launch(errHandler) {
                             v.results.collectLatest { text ->
-                                uiScope.launch {
-                                    tvOriginalView?.text = text
-                                }
+                                uiScope.launch { tvOriginalView?.text = text }
                                 if (text.isNotBlank()) {
+                                    maybeAutoSwitchLanguage(text)
                                     val tr = translator.translateSafe(text)
-                                    uiScope.launch {
-                                        tvTranslatedView?.text = tr
-                                    }
-                                    // добавляем в историю «существенные» изменения
+                                    uiScope.launch { tvTranslatedView?.text = tr }
                                     if (text.length >= 10 || text.endsWith(".") || text.endsWith("!") || text.endsWith("?")) {
                                         uiScope.launch { pushHistory(text, tr) }
+                                        lastPushedOriginal = ""
                                     }
                                     if (dialogMode && tr.isNotBlank()) {
                                         uiScope.launch { tts.speak(tr, targetLang) }
@@ -406,4 +425,6 @@ class LtAccessibilityService : AccessibilityService() {
             File(filesDir, "lt.log").appendText("$ts [INF] $msg\n")
         } catch (_: Exception) {}
     }
+
+    private val CYR_REGEX = Regex("[\\u0400-\\u04FF]")
 }
