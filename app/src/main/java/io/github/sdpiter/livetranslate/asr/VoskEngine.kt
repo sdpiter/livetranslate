@@ -154,7 +154,7 @@ class VoskEngine(
         tmpZip.delete()
 
         val nested = File(modelsDir, topFolder)
-        if (nested.exists() && nested.isDirectory) {
+        if (nested.exists() && isDirectory) {
             nested.listFiles()?.forEach { f -> f.renameTo(File(modelsDir, f.name)) }
             nested.delete()
         }
