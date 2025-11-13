@@ -97,6 +97,19 @@ class LtAccessibilityService : AccessibilityService() {
         )
         translator = MlKitTranslator()
         tts = TtsEngine(this)
+
+        // АВТО-ПРЕДЗАГРУЗКА EN↔RU (в фоне, с логом)
+        workScope.launch(errHandler) {
+            logI("preload.start")
+            try {
+                translator.ensure("en-US", "ru-RU")
+                translator.ensure("ru-RU", "en-US")
+                logI("preload.done")
+            } catch (e: Exception) {
+                logE("preload", e)
+            }
+        }
+
         logI("service.connected")
     }
 
@@ -125,7 +138,7 @@ class LtAccessibilityService : AccessibilityService() {
                 val m = dp(6); setMargins(m, m, m, m)
             }
             setSingleLine(true)
-            ellipsize = TextUtils.TruncateAt.END
+            ellipsize = android.text.TextUtils.TruncateAt.END
             setOnClickListener {
                 val now = System.currentTimeMillis()
                 if (!isToggling && now - lastTapTs >= 350) { lastTapTs = now; onClick() }
@@ -273,7 +286,6 @@ class LtAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    // Лог
     private fun logE(tag: String, e: Throwable) {
         try {
             val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
