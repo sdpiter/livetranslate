@@ -51,24 +51,24 @@ class LtAccessibilityService : AccessibilityService() {
             updateStateUi()
         }
     }
-    private val uiScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + errHandler)
-    private val workScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + errHandler)
+    private val uiScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + errHandler)
+    private val workScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + errHandler)
 
     private var vosk: VoskEngine? = null
     private lateinit var translator: MlKitTranslator
     private lateinit var tts: TtsEngine
 
-    private var listenLang: String = "en-US"
-    private var targetLang: String = "ru"
-    private var dialogMode: Boolean = false
-    private var listening: Boolean = false
+    private var listenLang = "en-US"
+    private var targetLang = "ru"
+    private var dialogMode = false
+    private var listening = false
     private var collectJob: Job? = null
 
     private val engineMutex = Mutex()
-    private var isToggling: Boolean = false
-    private var lastTapTs: Long = 0L
+    private var isToggling = false
+    private var lastTapTs = 0L
 
-    private val controlReceiver: BroadcastReceiver = object : BroadcastReceiver() {
+    private val controlReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 ACTION_SHOW   -> showPanel()
@@ -86,11 +86,8 @@ class LtAccessibilityService : AccessibilityService() {
             addAction(ACTION_SHOW); addAction(ACTION_HIDE); addAction(ACTION_TOGGLE)
         }
         try {
-            if (Build.VERSION.SDK_INT >= 34) {
-                registerReceiver(controlReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-            } else {
-                @Suppress("DEPRECATION") registerReceiver(controlReceiver, filter)
-            }
+            if (Build.VERSION.SDK_INT >= 34) registerReceiver(controlReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            else @Suppress("DEPRECATION") registerReceiver(controlReceiver, filter)
         } catch (e: Exception) { logE("registerReceiver", e) }
 
         vosk = VoskEngine(
@@ -116,17 +113,15 @@ class LtAccessibilityService : AccessibilityService() {
         PixelFormat.TRANSLUCENT
     ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; y = 40 }
 
-    private fun row(): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        weightSum = 3f
+    private fun row3(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL; weightSum = 3f
     }
 
     private fun btn(label: String, onClick: () -> Unit): Button =
         Button(this).apply {
             text = label
             isAllCaps = false
-            // одинаковая высота и одна строка — кнопки в одном уровне
-            layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(46), 1f).apply {
                 val m = dp(6); setMargins(m, m, m, m)
             }
             setSingleLine(true)
@@ -146,7 +141,7 @@ class LtAccessibilityService : AccessibilityService() {
             setPadding(dp(12), dp(10), dp(12), dp(12))
         }
 
-        val header = row().apply {
+        val header = row3().apply {
             val title = TextView(this@LtAccessibilityService).apply {
                 setTextColor(Color.WHITE); textSize = 16f; text = "LiveTranslate (Accessibility)"
             }
@@ -164,8 +159,7 @@ class LtAccessibilityService : AccessibilityService() {
         tvOriginalView = TextView(this).apply { setTextColor(0xFFB0BEC5.toInt()); textSize = 14f }
         tvTranslatedView = TextView(this).apply { setTextColor(Color.WHITE); textSize = 16f }
 
-        // Ряд 1
-        val row1 = row().apply {
+        val row1 = row3().apply {
             addView(btn("Субтитры") { dialogMode = false; startSafe() })
             addView(btn("Диалог") { dialogMode = true; startSafe() })
             btnStartPause = btn(if (listening) "Пауза" else "Старт") {
@@ -174,8 +168,7 @@ class LtAccessibilityService : AccessibilityService() {
             addView(btnStartPause)
         }
 
-        // Ряд 2
-        val row2 = row().apply {
+        val row2 = row3().apply {
             addView(btn("Swap EN↔RU") { swap(restart = listening) })
             addView(btn("Очистить") { tvOriginalView?.text = ""; tvTranslatedView?.text = "" })
             addView(btn("Скрыть") { hidePanel() })
@@ -189,8 +182,7 @@ class LtAccessibilityService : AccessibilityService() {
         root.addView(row2)
 
         try { wm.addView(root, lpWindow()); panel = root } catch (e: Exception) {
-            logE("addView", e)
-            Toast.makeText(this, "Ошибка overlay: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+            logE("addView", e); Toast.makeText(this, "Ошибка overlay: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -230,7 +222,7 @@ class LtAccessibilityService : AccessibilityService() {
                             v.results.collectLatest { text ->
                                 uiScope.launch { tvOriginalView?.text = text }
                                 if (text.isNotBlank()) {
-                                    val tr = try { translator.translate(text) } catch (e: Exception) { logE("translate", e); "" }
+                                    val tr = translator.translateSafe(text)
                                     uiScope.launch {
                                         tvTranslatedView?.text = tr
                                         if (dialogMode && tr.isNotBlank()) tts.speak(tr, targetLang)
@@ -281,7 +273,7 @@ class LtAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    // лог
+    // Лог
     private fun logE(tag: String, e: Throwable) {
         try {
             val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
