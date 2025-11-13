@@ -37,8 +37,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     packaging { resources.excludes += setOf("META-INF/**") }
-
-    // Если у вас есть productFlavors (acc/noacc) — оставьте их, менять не нужно.
 }
 
 dependencies {
