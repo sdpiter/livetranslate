@@ -1,7 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("kotlin-kapt")
+    // id("kotlin-kapt") // <-- ‼️ УДАЛЕНО: не используется в вашем коде
 }
 
 android {
@@ -38,8 +38,10 @@ android {
     }
     
     buildFeatures {
-        viewBinding = true
-        dataBinding = true
+        // ‼️ ИЗМЕНЕНО:
+        // Ваш код - это Compose (setContent), ему не нужен ни ViewBinding, ни DataBinding.
+        viewBinding = false 
+        dataBinding = false
     }
 }
 
@@ -79,11 +81,8 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
+
+    // ‼️ KAPT-зависимости не нужны, так как kapt отключен
 }
 
-// ✅ ИСПРАВЛЕНО: Добавлен блок для совместимости kapt и dataBinding
-kapt {
-    arguments {
-        arg("android.databinding.artifactType", "JAR")
-    }
-}
+// ‼️ УДАЛЕНО: Блок 'kapt' больше не нужен
