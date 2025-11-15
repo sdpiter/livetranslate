@@ -1,11 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Permissions -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.INTERNET" />
-    
-    <!-- Query for Speech Recognition Service -->
+
     <queries>
         <intent>
             <action android:name="android.speech.RecognitionService" />
@@ -18,38 +16,42 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.LiveTranslate"
-        android:usesCleartextTraffic="true">
-        
-        <!-- Main Activity -->
+        android:theme="@style/Theme.AppCompat.Light.DarkActionBar">
+
         <activity
             android:name=".MainActivity"
-            android:exported="true"
-            android:screenOrientation="portrait">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        
-        <!-- Settings Activity -->
+
         <activity
             android:name=".SettingsActivity"
             android:exported="false"
             android:label="@string/settings_title"
             android:parentActivityName=".MainActivity" />
-            
+
     </application>
 
 </manifest>
 ```
 
-**⚠️ ВАЖНО:** Удалите строку `package="io.github.sdpiter.livetranslate"` из тега `<manifest>`!
+---
+
+## ⚠️ **Важные моменты:**
+
+1. **Никакого атрибута `package`** в теге `<manifest>` - он теперь в `build.gradle.kts`
+2. Тема изменена на стандартную `Theme.AppCompat.Light.DarkActionBar` (если у вас есть кастомная тема, замените)
+3. Проверьте, что у вас есть иконки `ic_launcher` и `ic_launcher_round` в `res/mipmap`
 
 ---
 
-## **2️⃣ Проверьте `build.gradle.kts`:**
+## 🎨 **Если нужна кастомная тема:**
+
+Создайте файл `res/values/themes.xml`:
 
 **Ссылка:**
 ```
-https://github.com/sdpiter/livetranslate-android/edit/main/app/build.gradle.kts
+https://github.com/sdpiter/livetranslate-android/new/main?filename=app/src/main/res/values/themes.xml
