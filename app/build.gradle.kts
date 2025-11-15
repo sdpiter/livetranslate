@@ -5,11 +5,13 @@ plugins {
 }
 
 android {
-    namespace = "com.sdpiter.livetranslate"
+    // ✅ ИСПРАВЛЕНО 1: Namespace теперь совпадает с 'package' в Kotlin-файлах
+    namespace = "io.github.sdpiter.livetranslate"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.sdpiter.livetranslate"
+        // Я также поменял applicationId, чтобы он совпадал
+        applicationId = "io.github.sdpiter.livetranslate"
         minSdk = 24
         targetSdk = 34
         versionCode = 1
@@ -49,7 +51,6 @@ android {
     }
 
     composeOptions {
-        // ✅ ИСПРАВЛЕНО: 1.5.14 -> 1.5.10, чтобы соответствовать Kotlin 1.9.22
         kotlinCompilerExtensionVersion = "1.5.10" 
     }
 
@@ -82,6 +83,8 @@ dependencies {
     // --- Coroutines ---
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
+    // ✅ ИСПРАВЛЕНО 2: Добавлена библиотека для .await() с Google Play Services
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
     
     // --- Networking & JSON ---
     implementation("com.squareup.retrofit2:retrofit:2.9.0")
