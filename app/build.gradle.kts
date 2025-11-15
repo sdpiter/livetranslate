@@ -1,7 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("kotlin-parcelize") // <-- Возвращен
+    id("kotlin-parcelize") 
 }
 
 android {
@@ -49,7 +49,8 @@ android {
     }
 
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.14" 
+        // ✅ ИСПРАВЛЕНО: 1.5.14 -> 1.5.10, чтобы соответствовать Kotlin 1.9.22
+        kotlinCompilerExtensionVersion = "1.5.10" 
     }
 
     packaging {
@@ -103,9 +104,6 @@ dependencies {
         exclude(group = "net.java.dev.jna", module = "jna")
     }
     implementation("net.java.dev.jna:jna:5.13.0@aar")
-
-    // --- TTS (Text-to-Speech) ---
-    // ‼️ implementation("com.google.android.tts:tts:3.0.0") // <-- ✅ УДАЛЕНА ЭТА ОШИБОЧНАЯ СТРОКА
 
     // --- JETPACK COMPOSE ---
     val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
