@@ -16,12 +16,10 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.AppCompat.Light.DarkActionBar">
-
+        android:theme="@style/Theme.AppCompat.Light.DarkActionBar"> 
         <activity
             android:name=".MainActivity"
-            android:exported="true">
-            <intent-filter>
+            android:exported="true"> <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
@@ -29,29 +27,9 @@
 
         <activity
             android:name=".SettingsActivity"
-            android:exported="false"
-            android:label="@string/settings_title"
+            android:exported="false" android:label="@string/settings_title"
             android:parentActivityName=".MainActivity" />
 
     </application>
 
 </manifest>
-```
-
----
-
-## ⚠️ **Важные моменты:**
-
-1. **Никакого атрибута `package`** в теге `<manifest>` - он теперь в `build.gradle.kts`
-2. Тема изменена на стандартную `Theme.AppCompat.Light.DarkActionBar` (если у вас есть кастомная тема, замените)
-3. Проверьте, что у вас есть иконки `ic_launcher` и `ic_launcher_round` в `res/mipmap`
-
----
-
-## 🎨 **Если нужна кастомная тема:**
-
-Создайте файл `res/values/themes.xml`:
-
-**Ссылка:**
-```
-https://github.com/sdpiter/livetranslate-android/new/main?filename=app/src/main/res/values/themes.xml
