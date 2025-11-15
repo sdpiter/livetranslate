@@ -16,7 +16,7 @@ android {
         versionName = "0.1-alpha1"
 
         // Добавлено для совместимости с ML Kit и Vosk
-        multiDexEnabled true
+        multiDexEnabled = true // <-- ✅ ИСПРАВЛЕНО (добавлен '=')
         vectorDrawables {
             useSupportLibrary = true
         }
@@ -56,14 +56,16 @@ android {
         jvmTarget = "17"
     }
 
+    // ✅ ИСПРАВЛЕНО (блок 'packaging' переписан на синтаксис Kotlin)
     packaging {
         resources {
-            excludes += [
+            // Используем синтаксис Kotlin: .addAll(setOf(...))
+            excludes.addAll(setOf(
                 "META-INF/**",
-                "lib/x86/**",          // Исключаем x86 для уменьшения размера APK
-                "lib/x86_64/**",       // (опционально, если не нужна поддержка эмуляторов)
-                "*.so"                 // Vosk уже включает нужные .so через jna@aar
-            ]
+                "lib/x86/**",      // Исключаем x86 для уменьшения размера APK
+                "lib/x86_64/**",   // (опционально, если не нужна поддержка эмуляторов)
+                "*.so"             // Vosk уже включает нужные .so через jna@aar
+            ))
         }
     }
 }
